@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from .base import Renderer
 from .cpu import CpuRenderer
-from .cuda import CudaRenderer
+from .cuda_tonemap import CudaRenderer
 
 # Reuse backend instances. In particular, this keeps CUDA contexts, streams and
 # device buffers alive across animation frames instead of reallocating them for
-# every render request.
+# every render request. It also preserves temporally smoothed automatic tone
+# parameters across related GUI frames.
 _CPU_RENDERER = CpuRenderer()
 _CUDA_RENDERER = CudaRenderer()
 

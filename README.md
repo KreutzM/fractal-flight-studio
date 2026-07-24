@@ -8,7 +8,7 @@ parallelisierter CPU-Renderer zur Verfügung.
 ## Funktionsumfang
 
 - Mandelbrot-, Julia-, Burning-Ship-, Multibrot- und Newton-Fraktale
-- geglättete Escape-Time-Farbgebung und fünf Paletten
+- geglättete Escape-Time-Farbgebung, fünf Paletten und automatisches Tone Mapping
 - Maus-Zoom am Cursor, Verschieben durch Ziehen und frei wählbares Flugziel
 - kontinuierlicher Zoomflug mit separat einstellbarer Render-Skalierung
 - echte getrennte `float32`- und `float64`-Kernels
@@ -17,7 +17,7 @@ parallelisierter CPU-Renderer zur Verfügung.
 - sichtbare GPU-Diagnose mit Gerät, Treiber, Compute Capability und Fehlergrund
 - PNG-Export
 - CLI für Einzelbilder und logarithmische Frame-Sequenzen
-- persistente CUDA-Puffer, GPU-Farbgebung und nur eine RGB-Rückübertragung pro Frame
+- persistente CUDA-Puffer und GPU-Farbgebung; adaptives Tone Mapping benötigt nur eine kleine Bildstichprobe plus RGB-Rückübertragung
 - Unit-, Integrations-, CLI- und CUDA-Simulator-Tests
 
 ## Voraussetzungen
@@ -69,7 +69,6 @@ python -m pip install -e .
 fractal-studio
 ```
 
-
 ## Deep Zoom
 
 Ab Version 0.6.0 unterstützt die App für das Mandelbrot-Fraktal einen
@@ -95,7 +94,6 @@ Pauldelbrot-artiges Kriterium erkennt katastrophale Auslöschung und repariert
 die Darstellung durch Rebasing auf `Z₀ = 0`. In der Statuszeile ist außerdem
 sichtbar, ob die Referenz wiederverwendet oder neu aufgebaut wurde.
 
-
 ### Pan-Stabilität prüfen
 
 Die überlappenden Bereiche zweier um eine ganzzahlige Pixelzahl verschobener
@@ -107,6 +105,34 @@ Frames lassen sich reproduzierbar vergleichen:
 
 Erwartet werden `reference reused: True`, keine Klassifikationsfehler und
 `result: STABLE`.
+
+## Automatisches Tone Mapping
+
+Ab Version 0.7.0 nutzt die App standardmäßig ein automatisches Tone Mapping,
+damit feine Strukturen auch dann sichtbar bleiben, wenn die geglätteten
+Escape-Werte innerhalb des aktuellen Ausschnitts nur einen kleinen Teil des
+verfügbaren Wertebereichs belegen.
+
+Der Modus **`auto`** kombiniert:
+
+- eine gleichmäßig über das Bild verteilte Stichprobe von höchstens 4096 Pixeln
+- robuste Schwarz-/Weißpunkt-Schätzung über Perzentile
+- `asinh`-Kompression für helle Bereiche
+- eine automatisch aus der Werteverteilung abgeleitete Gamma-Anpassung
+- starke zeitliche Glättung während Flügen und moderate Glättung bei normaler Navigation
+- schnellere Anpassung nur bei deutlich erkennbaren Szenensprüngen
+
+Dadurch bleibt die Darstellung beim Verschieben und Fliegen wesentlich ruhiger
+als bei einer pro Frame neu berechneten Histogramm-Equalisierung. Die
+Automatik ist für Mandelbrot, Julia, Burning Ship und Multibrot voreingestellt.
+Beim Newton-Fraktal bleibt `auto` intern linear, damit die drei kodierten
+Wurzelbereiche nicht verfälscht werden. **`asinh`** verwendet dieselbe robuste
+Fensterung, aber ohne die zusätzliche automatische Gamma-Korrektur. Mit
+**`linear`** steht weiterhin die unveränderte Rohdarstellung zur Verfügung.
+
+Die GUI verwendet `auto` ohne zusätzliche Konfiguration. Über die CLI und die
+Python-API stehen außerdem `linear` für die unveränderte Rohdarstellung und
+`asinh` für robuste Fensterung ohne automatische Gamma-Korrektur bereit.
 
 ## Bedienung
 
@@ -132,6 +158,7 @@ fractal-render render \
   --width 1920 --height 1080 \
   --backend auto \
   --palette electric \
+  --tone-mapping auto \
   --output deep-zoom.png
 ```
 
@@ -218,15 +245,15 @@ GUI / CLI
 RenderRequest + Viewport
    ↓
 Backend-Auswahl (wiederverwendete Instanzen)
-   ├── Numba-CPU → CPU-Farbgebung
-   └── Numba-CUDA → persistente Puffer → GPU-Farbgebung
+   ├── Numba-CPU → Stichprobe → Tone Mapping → CPU-Farbgebung
+   └── Numba-CUDA → persistente Puffer → kleine GPU-Stichprobe → GPU-Farbgebung
    ↓
 RGB-Frame
    ↓
 PNG / Tkinter-Anzeige
 ```
 
-Die numerische `render()`-Schnittstelle bleibt für Tests und Analysen erhalten. Für die interaktive Anzeige nutzt `render_frame()` einen optimierten Backendpfad. CUDA lässt Iterationswerte und Innenmaske auf der GPU, färbt dort und kopiert nur das fertige RGB-Bild zurück.
+Die numerische `render()`-Schnittstelle bleibt für Tests und Analysen erhalten. Für die interaktive Anzeige nutzt `render_frame()` einen optimierten Backendpfad. CUDA lässt Iterationswerte und Innenmaske auch beim automatischen Tone Mapping auf der GPU. Nur eine gleichmäßig verteilte Stichprobe von höchstens 4096 Werten wird für die robuste Parameterbestimmung zum Host übertragen; anschließend erfolgen Tone-Kurve, Palette und Farbzyklen auf der GPU und nur das fertige RGB-Bild wird zurückkopiert.
 
 ## Aktuelle Grenzen
 
@@ -235,11 +262,8 @@ Die numerische `render()`-Schnittstelle bleibt für Tests und Analysen erhalten.
   wie WebGPU/wgpu oder Qt-RHI sinnvoll.
 - Generische GPU-Beschleunigung für AMD, Intel und Apple ist noch
   nicht implementiert. Auf diesen Systemen arbeitet der Numba-CPU-Renderer.
-- Deep-Zoom verwendet hochpräzise Viewport- und Referenzkoordinaten, während
-  Referenzorbit und Pixel-Perturbation auf CPU/GPU derzeit in `float64` laufen.
-  Multi-Reference-Tiling und Series Approximation sind noch nicht implementiert
-  und begrenzen daher Stabilität und Leistung bei extremen Zoomtiefen.
+- Der Referenzorbit und die hochpräzisen Viewport-Koordinaten werden auf der CPU erzeugt, die Pixelabweichungen selbst aber weiterhin in `float64` ausgewertet. Für noch tiefere Zooms wären Multi-Reference-Verfahren oder Series Approximation ein nächster Schritt.
 - 3D-Fraktale wie Mandelbulb sind noch nicht enthalten.
 
 Diese Grenzen sind bewusst: Das Repo liefert einen vollständig testbaren,
-überschaubaren MVP und eine saubere Basis für WebGPU, Multi-Reference-Deep-Zoom und 3D.
+überschaubaren MVP und eine saubere Basis für WebGPU, Perturbation und 3D.

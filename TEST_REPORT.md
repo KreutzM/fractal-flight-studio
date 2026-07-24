@@ -1,6 +1,6 @@
 # Test report
 
-Date: 2026-07-22
+Date: 2026-07-24
 
 ## Environment
 
@@ -11,15 +11,17 @@ Date: 2026-07-22
 - CUDA behavior tested with the Numba CUDA simulator
 - GUI tested with Tk under Xvfb
 
-## Version 0.6.0 changes under test
+## Version 0.7.0 changes under test
 
-- persistent reference orbit across related pan/zoom frames
-- high-precision viewport-to-reference offsets
-- true perturbation rebasing without absolute FP64 deep coordinates
-- cancellation-based glitch repair by rebasing to `Z_0 = 0`
-- longest-lived reference selection from viewport candidates
-- explicit rebase limit for escaped reference orbits
-- reused CUDA reference orbit retained on the device
+- automatic robust percentile windowing
+- adaptive `asinh` compression and bounded gamma correction
+- deterministic image-wide sampling capped at 4096 pixels
+- temporal smoothing across related frames and stronger damping for flights
+- faster adaptation after large distribution changes
+- automatic Newton fallback to linear tone mapping
+- optimized CUDA sampling and GPU colorization without full value readback
+- automatic GUI tone mapping and CLI tone-mapping selection
+- persistent tone state in CLI flight sequences
 
 ## Executed checks
 
@@ -38,7 +40,7 @@ Result: passed.
 PYTHONPATH=src pytest -q
 ```
 
-Result: `31 passed`.
+Result: `39 passed`.
 
 Coverage includes:
 
@@ -48,12 +50,17 @@ Coverage includes:
 - PNG and CLI rendering
 - perturbation auto-selection and reference preparation
 - direct-versus-perturbation numerical agreement
-- stable reference reuse after a pan
-- bit-identical overlap after an integer-pixel pan
+- stable reference reuse and bit-identical integer-pixel pan overlap
 - CPU rebasing and glitch-repair metadata
-- CUDA simulator parity for direct and perturbation frame paths
-- CUDA simulator parity for rebase/glitch behavior
+- CUDA simulator parity for direct and perturbation paths
 - persistent CUDA buffer, palette and reference-orbit reuse
+- automatic tone expansion of narrow value bands
+- resistance to sparse black/white outliers
+- temporal smoothing and scene-key resets
+- bounded stratified sampling on large frames
+- preservation of Newton root encoding
+- CPU/CUDA RGB parity for automatic tone mapping
+- optimized CUDA automatic-tone path with small sample transfer
 - Windows launcher and CUDA diagnostics
 
 ### Pan-stability check
@@ -71,11 +78,26 @@ inside/outside mismatches: 0
 result: STABLE
 ```
 
-### High-precision spot validation
+### CLI tone-mapping smoke tests
 
-Selected perturbation pixels were compared with direct `mpmath` Mandelbrot
-orbits. Inside/outside classifications matched; normalized smooth-value errors
-were in the low `1e-9` range for the sampled escaping points.
+Single image:
+
+```bash
+PYTHONPATH=src python -m fractal_flight_studio.cli render \
+  --backend cpu --width 160 --height 100 --iterations 120 \
+  --tone-mapping auto --output /tmp/ffs-tone.png
+```
+
+Three-frame flight with persistent automatic tone state:
+
+```bash
+PYTHONPATH=src python -m fractal_flight_studio.cli flight \
+  --backend cpu --width 96 --height 64 --iterations 80 \
+  --tone-mapping auto --target-x -0.75 --target-y 0.1 \
+  --target-width 1.5 --frames 3 --output-dir /tmp/ffs-tone-flight
+```
+
+Result: passed; all expected PNG files were created.
 
 ### GUI smoke test
 
@@ -85,20 +107,19 @@ xvfb-run -a env PYTHONPATH=src python scripts/gui_smoke.py
 
 Result: passed.
 
-
 ### Wheel build
 
 ```bash
 python -m pip wheel . --no-deps --no-build-isolation -w dist
 ```
 
-Result: `fractal_flight_studio-0.6.0-py3-none-any.whl` built successfully.
+Result: `fractal_flight_studio-0.7.0-py3-none-any.whl` built successfully.
 
 ## Not validated here
 
 - physical RTX 3060 throughput and driver-specific behavior
 - native CUDA PTX/SASS generated on Windows
-- Windows Tk display timing during a long deep-zoom flight
+- visual tone stability during a long real-time Windows/CUDA flight
 - native macOS packaging
 
 Run on the target RTX 3060 system:
