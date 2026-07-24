@@ -1,0 +1,243 @@
+# Fractal Flight Studio
+
+Plattformübergreifender Fraktal-Explorer in Python. Die Desktop-GUI läuft mit
+Tkinter, die Pixelberechnung wird durch Numba kompiliert. Auf NVIDIA-Systemen
+kann optional CUDA genutzt werden; auf allen anderen Systemen steht ein
+parallelisierter CPU-Renderer zur Verfügung.
+
+## Funktionsumfang
+
+- Mandelbrot-, Julia-, Burning-Ship-, Multibrot- und Newton-Fraktale
+- geglättete Escape-Time-Farbgebung und fünf Paletten
+- Maus-Zoom am Cursor, Verschieben durch Ziehen und frei wählbares Flugziel
+- kontinuierlicher Zoomflug mit separat einstellbarer Render-Skalierung
+- echte getrennte `float32`- und `float64`-Kernels
+- Deep-Zoom-Modus für Mandelbrot mit stabilem hochpräzisem Referenzorbit, echtem Rebasing und Glitch-Reparatur
+- automatische Backend-Auswahl: CUDA, falls verfügbar, sonst Numba-CPU
+- sichtbare GPU-Diagnose mit Gerät, Treiber, Compute Capability und Fehlergrund
+- PNG-Export
+- CLI für Einzelbilder und logarithmische Frame-Sequenzen
+- persistente CUDA-Puffer, GPU-Farbgebung und nur eine RGB-Rückübertragung pro Frame
+- Unit-, Integrations-, CLI- und CUDA-Simulator-Tests
+
+## Voraussetzungen
+
+- Python 3.11 bis 3.13
+- NumPy
+- Numba
+- Pillow
+- mpmath
+- Tkinter (bei den üblichen Windows- und macOS-Python-Installationen enthalten;
+  unter Debian/Ubuntu gegebenenfalls `python3-tk` installieren)
+- für echte CUDA-Beschleunigung: aktueller NVIDIA-Treiber und die optionale
+  Abhängigkeit `numba-cuda[cu12]`; das Windows-Startskript installiert sie
+  automatisch, sobald `nvidia-smi` eine NVIDIA-GPU meldet
+
+## Installation
+
+### Windows PowerShell
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -e .
+fractal-studio
+```
+
+Alternativ übernimmt `scripts\run_windows.ps1` die Interpretererkennung, richtet die virtuelle Umgebung ein und startet die Anwendung. Das Skript akzeptiert Python 3.11 bis 3.13 und ignoriert den funktionslosen Microsoft-Store-Platzhalter unter `WindowsApps`. Wird über `nvidia-smi` eine NVIDIA-GPU erkannt, installiert es automatisch die CUDA-12-Abhängigkeiten. Die erste CUDA-Installation ist deutlich größer als die CPU-Installation. Mit `FRACTAL_SKIP_CUDA=1` kann sie unterdrückt werden.
+
+Eine bereits vorhandene Umgebung kann gezielt für NVIDIA CUDA erweitert werden:
+
+```powershell
+.\scripts\enable_cuda.ps1
+```
+
+Manuell entspricht das:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -e ".[cuda12]"
+```
+
+### Linux/macOS
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+fractal-studio
+```
+
+
+## Deep Zoom
+
+Ab Version 0.6.0 unterstützt die App für das Mandelbrot-Fraktal einen
+stabilisierten Perturbationsmodus. Ein geeigneter hochpräziser Referenzorbit
+wird auf der CPU erzeugt und über zusammenhängende Pan-/Zoom-Frames hinweg
+wiederverwendet. Die Pixelabweichungen werden weiterhin auf CPU oder CUDA in
+`float64` ausgewertet. Dadurch lassen sich deutlich tiefere Zooms als mit
+direkter FP64-Berechnung erreichen, ohne dass schon kleinste Verschiebungen
+einen vollständig neuen numerischen Fehlerteppich erzeugen.
+
+In der GUI stehen dazu zwei neue Einstellungen bereit:
+
+- **Berechnungsmodus**: `auto`, `direct` oder `perturbation`
+- **Referenzpräzision (Bits)**: 128 bis 1024
+
+`auto` schaltet bei sehr kleinen Pixelabständen selbstständig auf
+Perturbationsrechnung um. Für sehr tiefe Zooms ist `perturbation` die robustere
+Wahl. Die Referenz wird innerhalb eines großzügigen Pan-/Zoom-Bereichs nicht
+neu verankert. Echtes Rebasing ändert nur die Zerlegung
+`z = Referenzorbit + Abweichung`; die hochpräzise Pixelkoordinate wird dabei
+niemals in ein absolutes FP64-`c` zurückverwandelt. Ein
+Pauldelbrot-artiges Kriterium erkennt katastrophale Auslöschung und repariert
+die Darstellung durch Rebasing auf `Z₀ = 0`. In der Statuszeile ist außerdem
+sichtbar, ob die Referenz wiederverwendet oder neu aufgebaut wurde.
+
+
+### Pan-Stabilität prüfen
+
+Die überlappenden Bereiche zweier um eine ganzzahlige Pixelzahl verschobener
+Frames lassen sich reproduzierbar vergleichen:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\check_pan_stability.py --backend cuda
+```
+
+Erwartet werden `reference reused: True`, keine Klassifikationsfehler und
+`result: STABLE`.
+
+## Bedienung
+
+- Mausrad: hinein- und herauszoomen
+- linke Maustaste ziehen: Ansicht verschieben
+- rechte Maustaste: Flugziel setzen
+- „Flug starten“: kontinuierlich zum Ziel zoomen
+- „PNG exportieren“: Bild in aktueller Fensterauflösung speichern
+
+Für normale Vorschau und Flug kann die Render-Skalierung getrennt auf 50 %, 75 % oder 100 % gesetzt werden. Auf CUDA-Systemen ist 100 % voreingestellt; auf CPU-Systemen 75 %. Die Statuszeile trennt Rechnen/Transfer von der Tk-Anzeige.
+
+## CLI
+
+Einzelbild:
+
+```bash
+fractal-render render \
+  --fractal mandelbrot \
+  --center-x -0.743643887037151 \
+  --center-y 0.131825904205330 \
+  --view-width 0.002 \
+  --iterations 1200 \
+  --width 1920 --height 1080 \
+  --backend auto \
+  --palette electric \
+  --output deep-zoom.png
+```
+
+Julia-Menge:
+
+```bash
+fractal-render render --fractal julia --julia-real -0.8 --julia-imag 0.156 \
+  --width 1280 --height 720 --output julia.png
+```
+
+Frame-Sequenz für einen Zoomflug:
+
+```bash
+fractal-render flight \
+  --target-x -0.743643887037151 \
+  --target-y 0.131825904205330 \
+  --target-width 0.00002 \
+  --frames 180 --output-dir rendered_frames
+```
+
+Die PNG-Sequenz kann anschließend beispielsweise mit FFmpeg kodiert werden:
+
+```bash
+ffmpeg -framerate 30 -i rendered_frames/frame_%05d.png \
+  -c:v libx264 -pix_fmt yuv420p fractal-flight.mp4
+```
+
+## GPU-Diagnose
+
+```powershell
+.\.venv\Scripts\python.exe -m fractal_flight_studio.doctor
+```
+
+Oder nach Installation des Kommandozeileneinstiegs:
+
+```powershell
+fractal-doctor
+```
+
+Bei erfolgreicher Erkennung nennt die Ausgabe die NVIDIA-GPU und CUDA ist in der App als `cuda-numba` sichtbar. Die Schaltfläche **GPU-Diagnose** zeigt dieselben Daten. Im Modus `auto` wird CUDA bevorzugt; ein CPU-Fallback wird mit Fehlergrund im Status angezeigt.
+
+## Benchmark
+
+CPU und CUDA im tatsächlichen Frame-Pfad vergleichen:
+
+```powershell
+.\.venv\Scripts\python.exe scripts\benchmark.py --backend all --repeats 5
+```
+
+Der Benchmark misst Fraktalberechnung, Farbgebung und die für Tkinter notwendige Rückübertragung, aber nicht die eigentliche Tk-Anzeige. Er verwirft JIT- und Puffer-Warm-up und meldet Medianwerte. Das JSON-Ergebnis eignet sich für reproduzierbare Vergleiche.
+
+GPU-Auslastung parallel beobachten:
+
+```powershell
+.\scripts\monitor_gpu.ps1
+```
+
+Bei einer kleinen Renderfläche oder vielen schnell divergierenden Pixeln kann eine RTX 3060 trotz hoher Frameleistung nur wenige Prozent mittlere Auslastung zeigen: Der Kernel läuft dann kurz und wartet anschließend auf Python/Tkinter. Maßgeblich sind daher zusätzlich die Millisekunden in der App-Statuszeile und die Benchmarkwerte.
+
+## Tests
+
+```bash
+python -m pytest
+```
+
+Der CUDA-Test nutzt den Numba-CUDA-Simulator und benötigt keine physische GPU.
+Ein echter Leistungs- und Treibertest muss trotzdem auf Zielhardware erfolgen.
+
+## Windows-Build
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build_windows.ps1
+```
+
+Das Skript installiert PyInstaller in der lokalen virtuellen Umgebung. Ein
+Windows-Build muss unter Windows erzeugt werden; PyInstaller ist kein
+Cross-Compiler.
+
+## Architektur
+
+```text
+GUI / CLI
+   ↓
+RenderRequest + Viewport
+   ↓
+Backend-Auswahl (wiederverwendete Instanzen)
+   ├── Numba-CPU → CPU-Farbgebung
+   └── Numba-CUDA → persistente Puffer → GPU-Farbgebung
+   ↓
+RGB-Frame
+   ↓
+PNG / Tkinter-Anzeige
+```
+
+Die numerische `render()`-Schnittstelle bleibt für Tests und Analysen erhalten. Für die interaktive Anzeige nutzt `render_frame()` einen optimierten Backendpfad. CUDA lässt Iterationswerte und Innenmaske auf der GPU, färbt dort und kopiert nur das fertige RGB-Bild zurück.
+
+## Aktuelle Grenzen
+
+- Das CUDA-Ergebnis wird für die Tkinter-Anzeige in den Hauptspeicher kopiert.
+  Für maximale 4K-Frameraten wäre später ein GPU-natives Präsentationsbackend
+  wie WebGPU/wgpu oder Qt-RHI sinnvoll.
+- Generische GPU-Beschleunigung für AMD, Intel und Apple ist noch
+  nicht implementiert. Auf diesen Systemen arbeitet der Numba-CPU-Renderer.
+- Keine Arbitrary-Precision- oder Perturbationsberechnung; `float64` begrenzt die
+  sinnvolle Deep-Zoom-Tiefe.
+- 3D-Fraktale wie Mandelbulb sind noch nicht enthalten.
+
+Diese Grenzen sind bewusst: Das Repo liefert einen vollständig testbaren,
+überschaubaren MVP und eine saubere Basis für WebGPU, Perturbation und 3D.
