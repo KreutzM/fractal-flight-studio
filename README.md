@@ -10,7 +10,7 @@ parallelisierter CPU-Renderer zur Verfügung.
 - Mandelbrot-, Julia-, Burning-Ship-, Multibrot- und Newton-Fraktale
 - geglättete Escape-Time-Farbgebung, fünf Paletten und automatisches Tone Mapping
 - Maus-Zoom am Cursor, Verschieben durch Ziehen und frei wählbares Flugziel
-- kontinuierlicher Zoomflug mit separat einstellbarer Render-Skalierung
+- kontinuierlicher Zoomflug mit separat einstellbarer Render-Skalierung und automatischem Stopp vor der numerischen Auflösungsgrenze
 - echte getrennte `float32`- und `float64`-Kernels
 - Deep-Zoom-Modus für Mandelbrot mit stabilem hochpräzisem Referenzorbit, echtem Rebasing und Glitch-Reparatur
 - automatische Backend-Auswahl: CUDA, falls verfügbar, sonst Numba-CPU
@@ -135,6 +135,8 @@ Python-API stehen außerdem `linear` für die unveränderte Rohdarstellung und
 `asinh` für robuste Fensterung ohne automatische Gamma-Korrektur bereit.
 
 ## Bedienung
+
+Der interaktive Flug endet automatisch beim letzten numerisch sinnvollen Frame. Für Mandelbrot im Perturbationsmodus berücksichtigt die Grenze die gewählte Referenzpräzision und den FP64-Delta-Bereich; bei direkt berechneten Fraktalen die ausgewählte Float32-/Float64-Koordinatenpräzision.
 
 - Mausrad: hinein- und herauszoomen
 - linke Maustaste ziehen: Ansicht verschieben

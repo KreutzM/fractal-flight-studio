@@ -10,6 +10,7 @@ import mpmath as mp
 from PIL import Image, ImageTk
 
 from .deep_zoom import digits_for_bits
+from .flight import advance_flight
 from .gpu_info import inspect_cuda
 from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
 from .palettes import palette_names
@@ -31,6 +32,7 @@ class FractalStudioApp:
         self.drag_start: tuple[int, int] | None = None
         self.flight_running = False
         self.flight_target_text: tuple[str, str] | None = None
+        self.flight_stop_notice: str | None = None
         self.last_frame_time = time.perf_counter()
         self.cuda_status = inspect_cuda()
 
@@ -186,6 +188,12 @@ class FractalStudioApp:
         ttk.Label(flight, text="Rechtsklick setzt Ziel", foreground="#555").grid(
             row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
         )
+        ttk.Label(
+            flight,
+            text="Stoppt automatisch an der numerischen Grenze",
+            foreground="#555",
+            wraplength=205,
+        ).grid(row=4, column=0, columnspan=2, sticky="w")
         row += 1
 
         buttons = ttk.Frame(controls)
@@ -417,13 +425,17 @@ class FractalStudioApp:
                 + reference_line
                 + repair_line
             )
-            self.status_var.set(
+            status = (
                 f"{result.backend}/{optimized}: Rechnen+Transfer {result.elapsed_seconds * 1000:.1f} ms; "
                 f"Anzeige {display_seconds * 1000:.1f} ms; ca. {fps:.1f} FPS"
                 f"{allocation_line}{upload_line}{deep_line}"
                 f"{device_line}{fallback_line}\n"
                 f"Rendergröße: {rgb.shape[1]}×{rgb.shape[0]}; Ansichtsbreite: {self.view_width_text}"
             )
+            if self.flight_stop_notice is not None and generation == self.render_generation:
+                status += f"\n{self.flight_stop_notice}"
+                self.flight_stop_notice = None
+            self.status_var.set(status)
         except Exception as exc:
             self.status_var.set(f"Renderfehler: {exc}")
 
@@ -474,6 +486,7 @@ class FractalStudioApp:
         self.flight_running = not self.flight_running
         self.flight_button.configure(text="Flug stoppen" if self.flight_running else "Flug starten")
         if self.flight_running:
+            self.flight_stop_notice = None
             self.last_frame_time = time.perf_counter()
             self._flight_step()
 
@@ -485,16 +498,23 @@ class FractalStudioApp:
         except ValueError:
             rate = 1.035
         with mp.workdps(self._work_digits()):
-            center_x, center_y, width = self._view_values()
             tx = mp.mpf(self.flight_target_text[0])
             ty = mp.mpf(self.flight_target_text[1])
-            attraction = mp.mpf("0.08")
-            self._set_view_values(
-                center_x + (tx - center_x) * attraction,
-                center_y + (ty - center_y) * attraction,
-                width / mp.mpf(rate),
-            )
+            request = self._request(self.flight_scale_var.get())
+            step = advance_flight(request, tx, ty, rate)
+            self._set_view_values(step.center_x, step.center_y, step.width)
+
+        # Submit the final useful frame at flight resolution before stopping.
         self.request_render()
+        if step.stopped:
+            self.flight_running = False
+            self.flight_button.configure(text="Flug starten")
+            self.flight_stop_notice = (
+                "Flug automatisch beendet: "
+                f"{step.limit.mode} erreicht "
+                f"(minimale Ansichtsbreite {self._format_display(step.limit.minimum_width, 8)})."
+            )
+            return
         self.root.after(33, self._flight_step)
 
     def reset_view(self) -> None:

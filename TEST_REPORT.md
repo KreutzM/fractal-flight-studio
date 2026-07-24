@@ -11,8 +11,11 @@ Date: 2026-07-24
 - CUDA behavior tested with the Numba CUDA simulator
 - GUI tested with Tk under Xvfb
 
-## Version 0.7.0 changes under test
+## Version 0.7.1 changes under test
 
+- automatic flight termination before pixel coordinates lose useful numerical spacing
+- precision-aware limits for perturbation, Float32 and Float64 render paths
+- exact clamping to the final valid viewport width and deferred final-frame notification
 - automatic robust percentile windowing
 - adaptive `asinh` compression and bounded gamma correction
 - deterministic image-wide sampling capped at 4096 pixels
@@ -40,7 +43,7 @@ Result: passed.
 PYTHONPATH=src pytest -q
 ```
 
-Result: `39 passed`.
+Result: `45 passed`.
 
 Coverage includes:
 
@@ -113,7 +116,7 @@ Result: passed.
 python -m pip wheel . --no-deps --no-build-isolation -w dist
 ```
 
-Result: `fractal_flight_studio-0.7.0-py3-none-any.whl` built successfully.
+Result: `fractal_flight_studio-0.7.1-py3-none-any.whl` built successfully.
 
 ## Not validated here
 

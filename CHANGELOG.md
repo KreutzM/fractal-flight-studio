@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.1 — 2026-07-24
+
+### Flight safety
+
+- Interactive flights now stop automatically at the last numerically useful viewport width.
+- Mandelbrot perturbation limits use reference precision and the FP64 delta range; direct paths use the selected Float32/Float64 coordinate spacing.
+- Automatic Mandelbrot rendering switches from direct Float32 calculation to perturbation before neighbouring pixels collapse.
+- The final valid frame is rendered exactly at the limit and the GUI reports why the flight stopped.
+
 ## 0.7.0 — 2026-07-24
 
 ### Automatic tone mapping

@@ -6,7 +6,7 @@ import math
 import mpmath as mp
 import numpy as np
 
-from .models import FractalKind, RenderMode, RenderRequest
+from .models import FractalKind, Precision, RenderMode, RenderRequest
 
 _LOG10_2 = math.log10(2.0)
 
@@ -95,6 +95,18 @@ def direct_pixel_size(request: RenderRequest) -> float:
     return width / max(1, request.width)
 
 
+def coordinate_ulp(scale: float, precision: Precision) -> float:
+    """Return one representable coordinate step at a positive scale."""
+
+    scale = max(1.0, abs(float(scale)))
+    if precision is Precision.FLOAT32:
+        value = np.float32(scale)
+        if not np.isfinite(value):
+            return float("inf")
+        return float(np.nextafter(value, np.float32(math.inf), dtype=np.float32) - value)
+    return math.ulp(scale)
+
+
 def should_use_perturbation(request: RenderRequest) -> bool:
     if request.fractal is not FractalKind.MANDELBROT:
         return False
@@ -112,8 +124,8 @@ def should_use_perturbation(request: RenderRequest) -> bool:
         cy = float(view.center_y)
     except Exception:
         cy = request.viewport.center_y
-    ulp = max(math.ulp(cx), math.ulp(cy), math.ulp(1.0))
-    return pixel <= ulp * 64.0
+    scale = max(1.0, abs(cx), abs(cy))
+    return pixel <= coordinate_ulp(scale, request.precision) * 64.0
 
 
 def _candidate_offsets() -> tuple[tuple[str, str], ...]:

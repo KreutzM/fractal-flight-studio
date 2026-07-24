@@ -28,6 +28,19 @@ def test_auto_switches_to_perturbation_for_tiny_pixels():
     assert should_use_perturbation(request) is True
 
 
+def test_auto_switches_before_float32_pixels_collapse():
+    request = RenderRequest(
+        width=1000,
+        height=700,
+        viewport=Viewport(-0.75, 0.1, 1e-4),
+        precision=Precision.FLOAT32,
+        center_x_text="-0.75",
+        center_y_text="0.1",
+        view_width_text="1e-4",
+    )
+    assert should_use_perturbation(request) is True
+
+
 def test_prepare_perturbation_builds_reference_orbit():
     request = RenderRequest(
         width=64,
