@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.7.0 — 2026-07-24
+
+### Automatic tone mapping
+
+- Added automatic contrast handling as the default presentation mode.
+- Uses a deterministic, image-wide sample of at most 4096 outside pixels and
+  robust percentile clipping instead of letting sparse extrema dominate the
+  available palette range.
+- Combines an adaptive `asinh` highlight compression curve with a bounded gamma
+  correction derived from the sampled value distribution.
+- Tone parameters are temporally smoothed across related pan and zoom frames;
+  flights use stronger damping to avoid exposure pumping.
+- Large scene changes converge faster, while viewport, resolution, palette and
+  color-cycle changes do not unnecessarily reset exposure.
+- Newton rendering keeps automatic mode linear so its three root regions remain
+  correctly encoded.
+
+### CUDA presentation path
+
+- Adaptive tone mapping keeps iteration values and the inside mask on the GPU.
+- CUDA transfers only a small stratified sample for parameter analysis and then
+  performs tone curve, palette lookup and color cycling on the GPU.
+- The optimized path still returns only the final RGB image, plus the small
+  sample used for automatic exposure.
+
+### Interface and tooling
+
+- The GUI uses automatic tone mapping by default without requiring manual exposure controls.
+- Added `--tone-mapping` to single-image, flight and benchmark CLI commands.
+- CLI flights preserve and smooth tone state across their frame sequence.
+- Reused renderer instances preserve temporally smoothed tone state across GUI frames.
+
+### Validation
+
+- Added automatic-curve, outlier-resistance, temporal-smoothing, scene-reset,
+  Newton-preservation and large-frame sampling tests.
+- Added CUDA-simulator parity coverage for the optimized automatic tone path.
+
 ## 0.6.0 — 2026-07-22
 
 ### Perturbation correctness and stability

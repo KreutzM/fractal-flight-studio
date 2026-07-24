@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
+
+from .tonemapping import ToneMapState, apply_tone_mapping
 
 _PALETTES: dict[str, tuple[tuple[float, tuple[int, int, int]], ...]] = {
     "inferno": (
@@ -64,10 +68,10 @@ def colorize(
     cycles: float = 1.0,
     phase: float = 0.0,
 ) -> np.ndarray:
-    """Map normalized iteration values to RGB.
+    """Map normalized values to RGB using a fixed palette.
 
-    ``inside`` pixels are rendered black. Newton values encode the root in
-    thirds and therefore preserve their three color regions automatically.
+    This is the low-level linear palette lookup used by the optimized CUDA frame
+    path. For automatic contrast enhancement, use :func:`tone_mapped_colorize`.
     """
     if values.shape != inside.shape:
         raise ValueError("values and inside masks must have the same shape")
@@ -80,3 +84,26 @@ def colorize(
     rgb = rgb.copy()
     rgb[inside] = 0
     return rgb
+
+
+def tone_mapped_colorize(
+    values: np.ndarray,
+    inside: np.ndarray,
+    palette: str = "inferno",
+    cycles: float = 1.0,
+    phase: float = 0.0,
+    tone_mapping: str = "auto",
+    tone_state: ToneMapState | None = None,
+    scene_key: tuple[Any, ...] | None = None,
+    tone_smoothing: float = 0.16,
+) -> tuple[np.ndarray, ToneMapState | None, dict[str, Any]]:
+    mapped, next_state, details = apply_tone_mapping(
+        values,
+        inside,
+        tone_mapping,
+        tone_state,
+        scene_key,
+        tone_smoothing,
+    )
+    rgb = colorize(mapped, inside, palette, cycles, phase)
+    return rgb, next_state, details

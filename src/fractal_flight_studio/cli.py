@@ -11,6 +11,7 @@ from .animation import FlightPath
 from .deep_zoom import digits_for_bits
 from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
 from .palettes import palette_names
+from .tonemapping import tone_mapping_names
 from .service import save_png
 
 
@@ -27,6 +28,7 @@ def _common_parser(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--palette", choices=palette_names(), default="inferno")
     parser.add_argument("--cycles", type=float, default=1.0)
     parser.add_argument("--phase", type=float, default=0.0)
+    parser.add_argument("--tone-mapping", choices=tone_mapping_names(), default="auto")
     parser.add_argument("--julia-real", type=float, default=-0.8)
     parser.add_argument("--julia-imag", type=float, default=0.156)
     parser.add_argument("--exponent", type=int, default=3)
@@ -110,12 +112,27 @@ def _interpolate_view_text(start: RenderRequest, target_x: str, target_y: str, t
         return mp.nstr(cx, digits), mp.nstr(cy, digits), mp.nstr(width, digits)
 
 
+
+def _tone_scene_key(request: RenderRequest, tone_mapping: str) -> tuple[str, ...]:
+    return (
+        request.fractal.value,
+        request.precision.value,
+        request.render_mode.value,
+        str(request.reference_bits),
+        tone_mapping,
+        str(request.max_iterations),
+        str(request.exponent),
+        f"{request.julia_c_real:.12g}",
+        f"{request.julia_c_imag:.12g}",
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     request = _request_from_args(args)
 
     if args.command == "render":
-        result = save_png(request, args.output, args.backend, args.palette, args.cycles, args.phase)
+        result = save_png(request, args.output, args.backend, args.palette, args.cycles, args.phase, args.tone_mapping)
         print(f"saved {args.output} via {result.backend} in {result.elapsed_seconds:.3f}s")
         return 0
 
@@ -124,6 +141,8 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("--frames must be at least 2")
         args.output_dir.mkdir(parents=True, exist_ok=True)
         total = 0.0
+        tone_state = None
+        tone_scene_key = _tone_scene_key(request, args.tone_mapping)
         for index in range(args.frames):
             cx_text, cy_text, width_text = _interpolate_view_text(
                 request,
@@ -147,7 +166,12 @@ def main(argv: list[str] | None = None) -> int:
                 args.palette,
                 args.cycles,
                 args.phase + index / args.frames,
+                args.tone_mapping,
+                tone_state,
+                tone_scene_key,
+                0.08,
             )
+            tone_state = result.details.get("tone_state")
             total += result.elapsed_seconds
             print(f"{index + 1}/{args.frames}: {result.elapsed_seconds:.3f}s", end="\r")
         print(f"\nrendered {args.frames} frames in {total:.2f}s kernel time")
@@ -155,14 +179,14 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "benchmark":
         warmup = replace(request, width=32, height=32, max_iterations=16)
-        save_png(warmup, Path("benchmark_warmup.png"), args.backend, args.palette)
+        save_png(warmup, Path("benchmark_warmup.png"), args.backend, args.palette, tone_mapping=args.tone_mapping)
         Path("benchmark_warmup.png").unlink(missing_ok=True)
-        result = save_png(request, Path("benchmark.png"), args.backend, args.palette)
+        result = save_png(request, Path("benchmark.png"), args.backend, args.palette, tone_mapping=args.tone_mapping)
         megapixels = request.width * request.height / 1_000_000
         print(
             f"backend={result.backend} precision={request.precision.value} "
             f"size={request.width}x{request.height} iterations={request.max_iterations} "
-            f"mode={request.render_mode.value} refbits={request.reference_bits} "
+            f"mode={request.render_mode.value} refbits={request.reference_bits} tone={args.tone_mapping} "
             f"time={result.elapsed_seconds:.3f}s throughput={megapixels/result.elapsed_seconds:.2f} MPix/s"
         )
         return 0
