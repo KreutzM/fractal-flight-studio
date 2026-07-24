@@ -235,9 +235,11 @@ Die numerische `render()`-Schnittstelle bleibt für Tests und Analysen erhalten.
   wie WebGPU/wgpu oder Qt-RHI sinnvoll.
 - Generische GPU-Beschleunigung für AMD, Intel und Apple ist noch
   nicht implementiert. Auf diesen Systemen arbeitet der Numba-CPU-Renderer.
-- Keine Arbitrary-Precision- oder Perturbationsberechnung; `float64` begrenzt die
-  sinnvolle Deep-Zoom-Tiefe.
+- Deep-Zoom verwendet hochpräzise Viewport- und Referenzkoordinaten, während
+  Referenzorbit und Pixel-Perturbation auf CPU/GPU derzeit in `float64` laufen.
+  Multi-Reference-Tiling und Series Approximation sind noch nicht implementiert
+  und begrenzen daher Stabilität und Leistung bei extremen Zoomtiefen.
 - 3D-Fraktale wie Mandelbulb sind noch nicht enthalten.
 
 Diese Grenzen sind bewusst: Das Repo liefert einen vollständig testbaren,
-überschaubaren MVP und eine saubere Basis für WebGPU, Perturbation und 3D.
+überschaubaren MVP und eine saubere Basis für WebGPU, Multi-Reference-Deep-Zoom und 3D.
