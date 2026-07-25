@@ -39,18 +39,20 @@ xvfb-run -a env PYTHONPATH=src python scripts/gui_smoke.py
 
 ## Repository acquisition and GitHub publishing
 
-- Before modifying files, confirm that the working tree represents the current target branch. Prefer a normal up-to-date local clone.
-- If no current clone is available, restore the latest successful repository-snapshot artifact: verify its SHA-256 manifest, run `git bundle verify`, and clone or fetch from the bundle.
-- Never develop against an older snapshot and manually reconstruct the current repository from individual GitHub files.
-- Before connector-based GitHub writes, read and follow `docs/AGENT_GIT_WORKFLOW.md`.
-- For a related multi-file change through the GitHub API, use one atomic Git-data transaction: create all blobs, create one tree based on the current target tree, create one commit with the current target commit as parent, then create or update the feature-branch ref once.
-- Do not use repeated contents-API `update_file` calls for a related multi-file change; each call creates an intermediate commit. Contents-API writes are acceptable for an intentional single-file change.
-- Before opening a pull request, compare the feature branch with the target branch and confirm the expected paths, `behind_by == 0`, and no unrelated changes.
+- Prefer a normal up-to-date local clone and normal `git push`; probe transport once at the start instead of repeatedly retrying unavailable paths.
+- A previously verified clone or snapshot may be reused for the next PR when its tree SHA exactly matches the current target-branch tree, even when the commit SHA differs because GitHub used squash or merge commits.
+- Reacquire a snapshot only when no verified local tree matches the current target tree. Verify its SHA-256 manifest and Git bundle before use.
+- Never develop against an unverified older tree or reconstruct current source by downloading unrelated individual files.
+- Before connector-based GitHub writes, read `docs/AGENT_GIT_WORKFLOW.md` and run `scripts/prepare_connector_publish.py` after the final local commit.
+- Publish related multi-file changes atomically: exact committed blobs, one tree, one commit with the current remote target commit as parent, then one branch-ref creation/update.
+- Stop at the first blob or tree SHA mismatch. Do not retry by copying, re-encoding, or manually editing file text.
+- Create the feature branch only after the verified tree and commit exist, then compare it with the target and require `behind_by == 0` plus only expected paths.
+- Repeated contents-API writes are only acceptable for a genuinely isolated single-file change.
 
 ## Development workflow
 
 - Work on a feature branch and open a pull request; do not commit directly to `main`.
 - Keep commits small, focused, and reviewable.
 - Add or update tests for behavioral and numerical changes.
-- Update `README.md`, `CHANGELOG.md`, and `TEST_REPORT.md` when user-facing behavior, constraints, or validation changes.
+- Update `CHANGELOG.md` for user-visible release behavior. Update `README.md` only when user workflows materially change, and update `TEST_REPORT.md` only when validation strategy or durable results change; avoid rewriting large documents mechanically in every PR.
 - Avoid committing generated images, benchmark output, virtual environments, build artifacts, or caches.

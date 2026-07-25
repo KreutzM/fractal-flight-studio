@@ -1,40 +1,41 @@
 # Agent Git workflow
 
-This document defines how automated agents acquire the repository, validate source freshness, and publish coherent changes without creating avoidable intermediate commits. The mandatory summary is in the repository-root `AGENTS.md`.
+This document defines the fastest safe workflow available when normal Git transport may be unavailable. The mandatory summary is in the repository-root `AGENTS.md`.
 
 ## Goals
 
-- Always modify the current target-branch content.
-- Prefer normal local Git operations when they are available.
-- Make related multi-file changes atomic and reviewable.
-- Keep GitHub Actions as independent validation, not as a substitute for knowingly testing an outdated tree.
-- Report exactly which source state and checks were used.
+- Work from the exact current target tree.
+- Use normal Git transport whenever it works.
+- Reuse verified local trees across sequential PRs instead of downloading a new snapshot unnecessarily.
+- Publish connector-based multi-file changes atomically and byte-for-byte identical to the tested local commit.
+- Avoid repeated probes, copy/paste payloads, intermediate commits, and oversized documentation churn.
 
 ## Decision flow
 
 ```text
-Current local clone of the target branch available?
-├─ Yes: fetch, fast-forward/rebase as appropriate, then create a feature branch.
-└─ No: restore the latest successful repository-snapshot artifact.
-        ├─ Verify the artifact checksum manifest.
-        ├─ Verify the Git bundle.
-        ├─ Clone or fetch from the bundle.
-        └─ Confirm the restored commit/tree matches the intended target content.
+Verified local tree matches current target tree?
+├─ Yes: reuse it, even if commit topology differs after squash/merge.
+└─ No: acquire and verify the newest repository snapshot.
 
-Can the feature branch be pushed with normal Git?
-├─ Yes: commit locally and push the branch.
-└─ No: publish through the GitHub Git-data API.
-        ├─ Create blobs for every changed file.
-        ├─ Create one tree based on the current target tree.
-        ├─ Create one commit with the current target commit as parent.
-        └─ Create/update the feature-branch ref once.
+Normal authenticated Git push works?
+├─ Yes: use local git commit/push, then open the PR through the connector.
+└─ No: prepare exact payloads from committed Git objects and use one Git-data transaction.
 ```
 
-## 1. Establish a current source tree
+## 1. Probe capabilities once
+
+At the start of a task, perform one bounded capability check:
+
+1. inspect the local repository and current branch;
+2. try the normal Git/CLI path once when it is available;
+3. verify the GitHub connector once;
+4. choose the working path and do not repeatedly retry a known unavailable transport during the same task.
+
+A failed DNS lookup, missing `gh`, or unavailable authenticated remote should immediately select the snapshot/connector path. Repeated probes add latency without increasing safety.
+
+## 2. Establish the current source tree
 
 ### Preferred: normal local clone
-
-Before editing, establish the target branch and synchronize it. Typical commands are:
 
 ```powershell
 git fetch origin --prune
@@ -43,26 +44,39 @@ git pull --ff-only
 git switch -c agent/<description>
 ```
 
-Do not start from a cached checkout merely because it is available. Check the target commit explicitly with `git rev-parse HEAD` and compare it with the repository's current default-branch head.
+Record both commit and tree:
 
-### Fallback: repository snapshot and Git bundle
+```powershell
+git rev-parse HEAD
+git rev-parse HEAD^{tree}
+```
 
-Use the newest successful `Repository snapshot` workflow artifact associated with the required source state. The artifact contains a source ZIP, a complete Git bundle, metadata, and a SHA-256 manifest.
+### Fast reuse for sequential PRs
 
-PowerShell example:
+GitHub squash and merge operations often create a new commit SHA while preserving the exact feature-tree contents. A verified local commit may therefore be reused when:
+
+- its tree SHA equals the current remote target tree SHA;
+- the intended target files are present and clean;
+- the remote target commit SHA is recorded separately for publication as the new commit parent.
+
+Commit-history identity is not required when tree identity is proven. This avoids downloading and verifying a fresh snapshot after every successful PR.
+
+Do not reuse a local checkout merely because it is recent. If the target tree differs, reacquire or integrate the current target before editing.
+
+### Snapshot fallback
+
+Use the newest successful `Repository snapshot` artifact only when no verified local tree matches the current target. Verify the checksum manifest and bundle:
 
 ```powershell
 Expand-Archive .\repository-snapshot-<sha>.zip -DestinationPath .\snapshot
 Set-Location .\snapshot
 Get-Content .\fractal-flight-studio-*.sha256
-# Validate each listed SHA-256 value with Get-FileHash.
-
 git init .\verify-bundle
 git -C .\verify-bundle bundle verify (Resolve-Path .\fractal-flight-studio-*.bundle)
 git clone .\fractal-flight-studio-*.bundle ..\fractal-flight-studio-work
 ```
 
-Linux example:
+Linux:
 
 ```bash
 unzip repository-snapshot-<sha>.zip -d snapshot
@@ -73,96 +87,116 @@ git -C verify-bundle bundle verify "$PWD"/fractal-flight-studio-*.bundle
 git clone fractal-flight-studio-*.bundle ../fractal-flight-studio-work
 ```
 
-A workflow artifact may represent a pull-request merge commit. That is acceptable when its tree is intentionally the source being modified. Record both the commit SHA and tree SHA. If the target branch has advanced, obtain a newer snapshot or rebase the work; do not reconstruct the difference by downloading files individually.
+Never reconstruct a current source tree by manually downloading a collection of individual repository files.
 
-## 2. Develop and validate locally
+## 3. Develop and validate locally
 
-Make changes in the restored/current working tree. Use normal Git inspection throughout:
+Work normally in Git and commit the complete intended result before preparing connector payloads:
 
 ```powershell
 git status --short
 git diff --check
 git diff --stat
-```
-
-Run the checks required by `AGENTS.md`. For changes that do not affect executable code, at minimum inspect the rendered Markdown structure and run `git diff --check`. Do not claim that the current integrated repository was tested when checks were run only against an older snapshot.
-
-## 3. Preferred publication: normal Git push
-
-When authenticated Git transport is available:
-
-```powershell
 git add -- <intended paths>
 git commit -m "<focused description>"
+```
+
+The worktree must be clean before publication preparation. Run the checks required by `AGENTS.md` and report only checks actually executed.
+
+Keep documentation proportional to the change:
+
+- update `CHANGELOG.md` for user-visible behavior;
+- update `README.md` only when the user workflow materially changes;
+- update `TEST_REPORT.md` only when validation strategy or durable results change;
+- do not replace large historical sections merely to restate the current PR.
+
+## 4. Preferred publication: normal Git push
+
+```powershell
 git push -u origin HEAD
 ```
 
-Stage only intended paths. Keep commits focused and reviewable. Open a pull request against the current target branch and let CI independently validate the pushed commit.
+Then open a draft PR through the GitHub connector. This remains the fastest and least error-prone route.
 
-## 4. Connector fallback: one Git tree and one commit
+## 5. Connector fallback: generate exact payloads
 
-When normal push is unavailable but GitHub Git-data operations are available, publish a related multi-file change atomically.
+Do not copy file text into connector calls manually. Generate payloads from committed Git blob objects:
 
-### Required sequence
-
-1. Resolve the current target commit SHA and its tree SHA.
-2. Create one blob for the final content of each added or modified file.
-3. Create one tree using the target tree as `base_tree_sha`. Include only changed paths.
-4. Create one commit using the new tree and the current target commit as `parent_sha`.
-5. Create the feature branch at that commit, or update an existing feature-branch ref once.
-6. Compare the feature branch with the target branch.
-7. Open a draft pull request.
-
-Conceptual payload:
-
-```text
-blob(AGENTS.md) ───────┐
-blob(docs/...md) ──────┼─> create_tree(base_tree_sha=<target tree>)
-other changed blobs ───┘
-                                ↓
-create_commit(tree_sha=<new tree>, parent_sha=<target commit>)
-                                ↓
-create/update feature-branch ref once
+```powershell
+python scripts\prepare_connector_publish.py `
+  --base-ref <verified-local-base-ref> `
+  --repository KreutzM/fractal-flight-studio `
+  --remote-base-commit <current-remote-main-sha> `
+  --expected-base-tree <current-remote-main-tree-sha> `
+  --branch agent/<description> `
+  --output-dir .agent-publish
 ```
 
-### Why this is required
+The helper:
 
-Repeated contents-API updates create one commit per file and expose incomplete intermediate branch states. A Git-data tree commit is atomic, produces a clean history, reduces API calls, and mirrors a normal local `git commit`.
+- refuses a dirty worktree;
+- requires the local base to be an ancestor of the final local commit;
+- verifies the expected remote base tree against the local base tree;
+- reads bytes with `git cat-file`, preserving line endings, binary data, and encodings;
+- emits one Base64 JSON payload per unique blob;
+- emits tree, commit, branch, and compare request templates;
+- records every expected blob SHA and the expected final tree SHA.
+
+The generated `.agent-publish/README.txt` is the publication checklist.
+
+### Required connector sequence
+
+1. Upload each generated blob payload. Verify every returned SHA immediately.
+2. Stop on the first mismatch. Do not retry by copying or re-encoding text.
+3. Create one tree using `create-tree.json` and require its returned SHA to equal the manifest's `expected_tree`.
+4. Create one commit with the current remote target commit as parent.
+5. Create the feature branch only now, after the commit is complete.
+6. Compare target and feature branch; require `behind_by == 0` and only expected paths.
+7. Open a draft PR.
+
+Because Git blob and tree IDs are content-addressed, matching SHAs prove that GitHub received exactly the locally tested content.
+
+### Why the branch is created last
+
+Creating a branch before the final tree exists exposes an unnecessary incomplete ref and causes repeated branch-creation errors on retries. Preparing blobs, tree, and commit first allows one final branch operation.
 
 ### Single-file exception
 
-The contents API (`create_file`, `update_file`, or `delete_file`) is acceptable for a truly isolated single-file change. Do not split one logical multi-file change into multiple contents-API commits.
+The contents API is acceptable for a genuinely isolated single-file change. Do not split a logical multi-file change into several contents-API commits.
 
-## 5. Pre-PR verification
+## 6. Pre-PR verification
 
-Before opening the pull request, compare target and feature branch and verify:
+Before opening the PR, verify:
 
-- the merge base is the intended target commit;
-- the branch is not behind the target (`behind_by == 0`);
-- only expected files changed;
+- current remote target commit is still the intended parent;
+- target tree still matches the verified base tree;
+- branch is one focused commit ahead and zero behind;
+- changed paths exactly match the manifest;
 - additions/deletions are plausible;
-- generated files, caches, artifacts, and unrelated edits are absent;
-- the commit count matches the intended history.
+- generated payloads, caches, coverage files, build output, and local artifacts are not committed.
 
-If the target branch moved after the commit was prepared, rebuild/rebase against the new target before opening or merging the pull request.
+If the remote target tree moved, stop and rebuild against the new tree. Do not transplant the final files manually.
 
-## 6. Pull request and merge
+## 7. Pull request and merge
 
-Open a draft pull request unless the user explicitly requests otherwise. The description must state:
+Open a draft PR unless the user explicitly requests otherwise. State:
 
 - what changed and why;
-- the source commit/tree used;
+- remote parent commit and verified base tree;
 - local checks actually executed;
 - checks delegated to CI;
-- hardware or platform validation that remains outstanding.
+- remaining hardware/platform validation.
 
-Merge only after required checks pass and the user has authorized the merge. If an API fallback produced several unavoidable commits, prefer squash merge unless preserving those commits has review value.
+Merge only after required checks pass and the user authorizes it.
 
 ## Prohibited shortcuts
 
-- Do not edit an outdated clone and manually copy changed files onto the current branch.
-- Do not infer a local file path from a connector file reference without downloading or mounting it.
-- Do not publish a related multi-file change through repeated contents-API calls.
-- Do not update `main` directly.
-- Do not open a pull request before comparing it with the current target branch.
-- Do not describe CI as local validation or simulator results as physical GPU validation.
+- repeated retries of a transport already known to be unavailable;
+- editing an unverified stale tree;
+- reconstructing current source from individual downloads;
+- publishing multi-file work through repeated contents-API updates;
+- copying large file contents manually into blob calls;
+- accepting any blob or tree SHA mismatch;
+- creating the feature branch before the final commit exists;
+- updating `main` directly;
+- describing CI as local validation or simulator results as physical GPU validation.
