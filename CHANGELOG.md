@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.7.2 — 2026-07-25
+
+### Visual flight-quality stop
+
+- Added a renderer-level pixel-grid quality check that measures whether
+  neighbouring X/Y samples still map to distinct FP32/FP64 coordinates with a
+  safety margin of at least four ULPs.
+- Deep Mandelbrot flights now rebuild a stale perturbation reference before its
+  relative FP64 grid can collapse into repeated coordinates.
+- Each completed flight candidate is checked before display for near-uniform
+  colour fields, missing edge structure, repeated rows/columns and repeated
+  two-dimensional pixel blocks.
+- If either the coordinate grid or the rendered image loses useful resolution,
+  the GUI rejects that candidate, restores the last good view and stops before
+  block or colour-field artifacts are displayed.
+- Direct auto-render frames expose grid uniqueness and ULP margin in renderer
+  metadata; an exhausted fresh perturbation grid is reported as an explicit
+  render boundary.
+
+### Validation
+
+- Added regressions for collapsed coordinate grids, automatic reference
+  re-anchoring, uniform colour fields, repeated pixel blocks and last-good-frame
+  restoration.
+
 ## 0.7.1 — 2026-07-25
 
 ### Flight and precision stability

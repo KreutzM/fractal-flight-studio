@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 
-from ..deep_zoom import effective_direct_precision
+from ..deep_zoom import direct_pixel_grid_quality, effective_direct_precision
 from ..models import Precision, RenderRequest
 from .base import FrameResult, Renderer, RenderResult
 from .cpu import CpuRenderer
@@ -27,7 +27,9 @@ class AdaptivePrecisionRenderer(Renderer):
         return replace(request, precision=precision), precision
 
     @staticmethod
-    def _annotate(result: RenderResult | FrameResult, requested: Precision) -> None:
+    def _annotate(
+        result: RenderResult | FrameResult, request: RenderRequest, requested: Precision
+    ) -> None:
         render_mode = result.details.get("render_mode", "direct")
         effective = (
             Precision.FLOAT64
@@ -37,17 +39,19 @@ class AdaptivePrecisionRenderer(Renderer):
         result.details["requested_precision"] = requested.value
         result.details["precision"] = effective.value
         result.details["precision_promoted"] = effective is not requested
+        if render_mode == "direct":
+            result.details.update(direct_pixel_grid_quality(request, effective).as_details())
 
     def render(self, request: RenderRequest) -> RenderResult:
         effective_request, _ = self._effective_request(request)
         result = self._delegate.render(effective_request)
-        self._annotate(result, request.precision)
+        self._annotate(result, effective_request, request.precision)
         return result
 
     def render_frame(self, request: RenderRequest, *args, **kwargs) -> FrameResult:
         effective_request, _ = self._effective_request(request)
         result = self._delegate.render_frame(effective_request, *args, **kwargs)
-        self._annotate(result, request.precision)
+        self._annotate(result, effective_request, request.precision)
         return result
 
 

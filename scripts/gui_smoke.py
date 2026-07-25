@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 
-from fractal_flight_studio.app import FractalStudioApp
+from fractal_flight_studio.flight_app import FractalStudioApp
 
 
 def main() -> int:
