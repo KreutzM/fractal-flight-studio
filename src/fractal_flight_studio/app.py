@@ -9,7 +9,7 @@ from tkinter import filedialog, messagebox, ttk
 import mpmath as mp
 from PIL import Image, ImageTk
 
-from .deep_zoom import digits_for_bits
+from .deep_zoom import digits_for_bits, effective_direct_precision, minimum_safe_view_width
 from .gpu_info import inspect_cuda
 from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
 from .palettes import palette_names
@@ -355,15 +355,15 @@ class FractalStudioApp:
             f"Rendere mit {renderer.name} ({request.width}×{request.height}, {request.precision.value}, {request.render_mode.value}) …"
         )
         future = self.executor.submit(renderer.render_frame, request, palette, cycles, 0.0)
-        self.root.after(10, self._poll_render, future, generation)
+        self.root.after(10, self._poll_render, future, generation, request)
 
-    def _poll_render(self, future: Future, generation: int) -> None:
+    def _poll_render(self, future: Future, generation: int, request: RenderRequest) -> None:
         if future.done():
-            self._finish_render(future, generation)
+            self._finish_render(future, generation, request)
             return
-        self.root.after(20, self._poll_render, future, generation)
+        self.root.after(20, self._poll_render, future, generation, request)
 
-    def _finish_render(self, future: Future, generation: int) -> None:
+    def _finish_render(self, future: Future, generation: int, request: RenderRequest) -> None:
         self.render_in_progress = False
         try:
             result = future.result()
@@ -396,6 +396,14 @@ class FractalStudioApp:
             allocation_line = f"; Puffer {allocation * 1000:.1f} ms" if allocation > 0 else ""
             upload_line = f"; Ref {reference_upload * 1000:.1f} ms" if reference_upload > 0 else ""
             render_mode = result.details.get("render_mode", "direct")
+            requested_precision = request.precision.value
+            if render_mode == "perturbation":
+                effective_precision = Precision.FLOAT64.value
+            else:
+                effective_precision = effective_direct_precision(request).value
+            precision_line = effective_precision
+            if requested_precision != effective_precision:
+                precision_line = f"{requested_precision}→{effective_precision}"
             ref_bits = int(result.details.get("reference_bits", 0) or 0)
             repair_line = ""
             if result.details.get("rebasing_enabled"):
@@ -413,6 +421,7 @@ class FractalStudioApp:
                 reference_line = "; Referenz wiederverwendet" if result.details.get("reference_reused") else "; Referenz neu"
             deep_line = (
                 f"; Modus {render_mode}"
+                + (f"; Präzision {precision_line}" if precision_line else "")
                 + (f"; RefBits {ref_bits}" if ref_bits else "")
                 + reference_line
                 + repair_line
@@ -467,6 +476,12 @@ class FractalStudioApp:
             f"Flugziel:{target}"
         )
 
+    def _stop_flight(self, message: str | None = None) -> None:
+        self.flight_running = False
+        self.flight_button.configure(text="Flug starten")
+        if message:
+            self.position_var.set(message)
+
     def toggle_flight(self) -> None:
         if not self.flight_running and self.flight_target_text is None:
             messagebox.showinfo("Flugziel", "Setze zuerst mit Rechtsklick ein Flugziel.")
@@ -484,17 +499,28 @@ class FractalStudioApp:
             rate = max(1.0001, float(self.flight_rate_var.get()))
         except ValueError:
             rate = 1.035
+        request = self._request(self.flight_scale_var.get())
+        minimum_width = minimum_safe_view_width(request)
         with mp.workdps(self._work_digits()):
             center_x, center_y, width = self._view_values()
             tx = mp.mpf(self.flight_target_text[0])
             ty = mp.mpf(self.flight_target_text[1])
             attraction = mp.mpf("0.08")
+            next_width = width / mp.mpf(rate)
+            reached_limit = next_width <= minimum_width
             self._set_view_values(
                 center_x + (tx - center_x) * attraction,
                 center_y + (ty - center_y) * attraction,
-                width / mp.mpf(rate),
+                minimum_width if reached_limit else next_width,
             )
         self.request_render()
+        if reached_limit:
+            self._stop_flight(
+                "Flug automatisch gestoppt: numerische Präzisionsgrenze erreicht.\n"
+                f"Mindestbreite: {mp.nstr(minimum_width, 8)}; "
+                f"Referenz: {int(self.reference_bits_var.get())} Bit"
+            )
+            return
         self.root.after(33, self._flight_step)
 
     def reset_view(self) -> None:
