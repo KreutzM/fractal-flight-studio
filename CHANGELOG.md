@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.0 — 2026-07-25
+
+### Curated deep-zoom targets
+
+- Added a packaged, schema-validated JSON catalog with ten curated Mandelbrot
+  locations, exact text coordinates, initial view widths, descriptions, tags,
+  source links and recommended render settings.
+- Added compact controls that can set a catalog entry as the flight target or
+  load its complete view while preserving the existing free right-click target.
+- Applying a target also selects its recommended iteration count, reference
+  precision and palette without converting deep coordinates to absolute floats.
+
+### Validation
+
+- Added catalog schema, exact-coordinate and GUI-application regressions.
+- Extended the Xvfb GUI smoke test to exercise the compact target selector and
+  exact flight-target application.
+- Rendered every packaged target with its recommendations at low resolution and
+  confirmed that all ten pass the existing visual-quality classifier.
+
 ## 0.7.2 — 2026-07-25
 
 ### Visual flight-quality stop
