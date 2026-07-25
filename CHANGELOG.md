@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.7.1 — 2026-07-25
+
+### Flight and precision stability
+
+- Added an automatic direct-precision ladder in `auto` mode: fast `float32`
+  frames are promoted to `float64` before FP32 coordinate quantization becomes
+  visible, followed by Mandelbrot perturbation when direct FP64 becomes unsafe.
+- `direct` mode continues to honor the explicitly selected precision without
+  hidden promotion.
+- Added a conservative minimum viewport width derived from reference bits,
+  render width and the FP64 perturbation-delta floor.
+- Interactive flights now clamp to that width and stop automatically instead of
+  continuing into blocky or single-colour frames.
+- The GUI status reports effective precision transitions such as
+  `float32→float64`.
+
+### Validation
+
+- Added regression coverage for FP32 promotion, FP64-to-perturbation switching,
+  strict direct mode, finite reference-bit flight floors and automatic flight
+  stopping.
+
 ## 0.7.0 — 2026-07-24
 
 ### Automatic tone mapping
