@@ -55,5 +55,5 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Starting Fractal Flight Studio..."
-& $VenvPython -m fractal_flight_studio.app
+& $VenvPython -m fractal_flight_studio.flight_app
 if ($LASTEXITCODE -ne 0) { throw "Fractal Flight Studio exited with code $LASTEXITCODE." }

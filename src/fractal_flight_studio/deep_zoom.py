@@ -30,6 +30,37 @@ REFERENCE_ZOOM_OUT_LIMIT = 4.0
 DIRECT_ULP_GUARD = 8.0
 REFERENCE_GUARD_BITS = 16
 PERTURBATION_NORMAL_GUARD = 64.0
+PIXEL_GRID_ULP_GUARD = 4.0
+
+
+class PixelGridExhaustedError(RuntimeError):
+    """Raised when a fresh renderer pixel grid can no longer resolve neighbours."""
+
+    def __init__(self, quality: "PixelGridQuality") -> None:
+        self.quality = quality
+        super().__init__(
+            "renderer pixel grid no longer resolves neighbouring coordinates "
+            f"(X {quality.x_unique_fraction:.1%}, Y {quality.y_unique_fraction:.1%}, "
+            f"largest equal run {quality.maximum_equal_run})"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PixelGridQuality:
+    x_unique_fraction: float
+    y_unique_fraction: float
+    minimum_ulp_margin: float
+    maximum_equal_run: int
+    safe: bool
+
+    def as_details(self) -> dict[str, float | int | bool]:
+        return {
+            "pixel_grid_safe": self.safe,
+            "pixel_grid_x_unique_fraction": self.x_unique_fraction,
+            "pixel_grid_y_unique_fraction": self.y_unique_fraction,
+            "pixel_grid_minimum_ulp_margin": self.minimum_ulp_margin,
+            "pixel_grid_maximum_equal_run": self.maximum_equal_run,
+        }
 
 
 @dataclass(slots=True)
@@ -72,6 +103,8 @@ class PerturbationData:
     reference_key: tuple[str, str, int, int, float]
     reference_reused: bool
     reference_rebase_limit: int
+    grid_quality: PixelGridQuality
+    reference_reanchored_for_grid: bool = False
 
 
 @dataclass(slots=True)
@@ -124,6 +157,94 @@ def _coordinate_ulp(value: float, precision: Precision) -> float:
     if not math.isfinite(value):
         return float("inf")
     return math.ulp(value)
+
+
+def _maximum_equal_run(differences: np.ndarray) -> int:
+    maximum = 1
+    current = 1
+    for difference in differences:
+        if difference == 0:
+            current += 1
+            maximum = max(maximum, current)
+        else:
+            current = 1
+    return maximum
+
+
+def _axis_grid_quality(origin, step, count: int) -> tuple[float, float, int]:
+    if count <= 1:
+        return 1.0, float("inf"), 1
+
+    dtype = np.result_type(origin, step)
+    if dtype not in (np.dtype(np.float32), np.dtype(np.float64)):
+        dtype = np.dtype(np.float64)
+    scalar = dtype.type
+    indices = np.arange(count, dtype=dtype)
+    values = scalar(origin) + indices * scalar(step)
+    differences = np.diff(values)
+    distinct = differences != scalar(0)
+    unique_fraction = (int(np.count_nonzero(distinct)) + 1) / count
+    maximum_equal_run = _maximum_equal_run(differences)
+
+    spacing = np.maximum(np.abs(np.spacing(values[:-1])), np.abs(np.spacing(values[1:])))
+    ratios = np.zeros_like(differences, dtype=np.float64)
+    valid = np.isfinite(differences) & np.isfinite(spacing) & (spacing > 0)
+    ratios[valid] = np.abs(differences[valid].astype(np.float64)) / spacing[valid].astype(np.float64)
+    minimum_ulp_margin = float(np.min(ratios)) if ratios.size else float("inf")
+    return unique_fraction, minimum_ulp_margin, maximum_equal_run
+
+
+def pixel_grid_quality(
+    x0,
+    y0,
+    dx,
+    dy,
+    width: int,
+    height: int,
+    *,
+    ulp_guard: float = PIXEL_GRID_ULP_GUARD,
+) -> PixelGridQuality:
+    """Measure whether the renderer can still distinguish neighbouring pixels."""
+
+    x_unique, x_margin, x_run = _axis_grid_quality(x0, dx, width)
+    y_unique, y_margin, y_run = _axis_grid_quality(y0, dy, height)
+    minimum_margin = min(x_margin, y_margin)
+    safe = (
+        x_unique == 1.0
+        and y_unique == 1.0
+        and minimum_margin >= ulp_guard
+        and math.isfinite(minimum_margin)
+    )
+    return PixelGridQuality(
+        x_unique_fraction=x_unique,
+        y_unique_fraction=y_unique,
+        minimum_ulp_margin=minimum_margin,
+        maximum_equal_run=max(x_run, y_run),
+        safe=safe,
+    )
+
+
+def direct_pixel_grid_quality(request: RenderRequest, precision: Precision) -> PixelGridQuality:
+    """Measure the exact direct-kernel coordinate grid for one request."""
+
+    view = request_view_text(request)
+    dps = digits_for_bits(request.reference_bits)
+    with mp.workdps(dps):
+        width = mp.mpf(view.width)
+        height = width * mp.mpf(request.height) / mp.mpf(request.width)
+        dx = width / request.width
+        dy = height / request.height
+        x0 = mp.mpf(view.center_x) - width / 2 + dx / 2
+        y0 = mp.mpf(view.center_y) - height / 2 + dy / 2
+    scalar = np.float32 if precision is Precision.FLOAT32 else np.float64
+    return pixel_grid_quality(
+        scalar(x0),
+        scalar(y0),
+        scalar(dx),
+        scalar(dy),
+        request.width,
+        request.height,
+    )
 
 
 def direct_precision_pixel_limit(request: RenderRequest, precision: Precision) -> float:
@@ -308,6 +429,14 @@ def _prepare_with_reference(
         center_offset_y = mp.mpf(view.center_y) - mp.mpf(reference.anchor_y_text)
         x0_rel = center_offset_x - width / 2 + dx / 2
         y0_rel = center_offset_y - height / 2 + dy / 2
+        grid_quality = pixel_grid_quality(
+            np.float64(x0_rel),
+            np.float64(y0_rel),
+            np.float64(dx),
+            np.float64(dy),
+            request.width,
+            request.height,
+        )
         return PerturbationData(
             center_x_text=view.center_x,
             center_y_text=view.center_y,
@@ -324,6 +453,7 @@ def _prepare_with_reference(
             reference_key=reference.key,
             reference_reused=reused,
             reference_rebase_limit=min(reference.rebase_limit, request.max_iterations),
+            grid_quality=grid_quality,
         )
 
 
@@ -345,7 +475,14 @@ class PerturbationReferenceCache:
         if not reused:
             self._reference = _build_reference_orbit(request)
         assert self._reference is not None
-        return _prepare_with_reference(request, self._reference, reused=reused)
+        perturb = _prepare_with_reference(request, self._reference, reused=reused)
+        if reused and not perturb.grid_quality.safe:
+            self._reference = _build_reference_orbit(request)
+            perturb = _prepare_with_reference(request, self._reference, reused=False)
+            perturb.reference_reanchored_for_grid = True
+        if not perturb.grid_quality.safe:
+            raise PixelGridExhaustedError(perturb.grid_quality)
+        return perturb
 
 
 def prepare_perturbation(request: RenderRequest) -> PerturbationData:

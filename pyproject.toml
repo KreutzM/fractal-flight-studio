@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "fractal-flight-studio"
-version = "0.7.1"
+version = "0.7.2"
 description = "Cross-platform interactive fractal explorer with Numba CPU and optional CUDA rendering"
 readme = "README.md"
 requires-python = ">=3.11,<3.14"
@@ -24,7 +24,7 @@ cuda12 = ["numba-cuda[cu12]"]
 cuda13 = ["numba-cuda[cu13]"]
 
 [project.scripts]
-fractal-studio = "fractal_flight_studio.app:main"
+fractal-studio = "fractal_flight_studio.flight_app:main"
 fractal-render = "fractal_flight_studio.cli:main"
 fractal-doctor = "fractal_flight_studio.doctor:main"
 

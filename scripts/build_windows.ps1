@@ -36,7 +36,7 @@ try {
         --name FractalFlightStudio `
         --collect-all numba `
         --collect-all llvmlite `
-        src\fractal_flight_studio\app.py
+        src\fractal_flight_studio\flight_app.py
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed." }
 
     Write-Host "Build created in dist\FractalFlightStudio"

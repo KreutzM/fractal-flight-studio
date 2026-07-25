@@ -4,6 +4,7 @@ import numpy as np
 
 from fractal_flight_studio.deep_zoom import (
     PerturbationReferenceCache,
+    pixel_grid_quality,
     prepare_perturbation,
     should_use_perturbation,
 )
@@ -13,6 +14,48 @@ from fractal_flight_studio.renderers.cpu import CpuRenderer
 
 DEEP_CENTER_X = "-0.743643887037158704752191506114774"
 DEEP_CENTER_Y = "0.131825904205311970493132056385139"
+
+
+def test_pixel_grid_quality_detects_collapsed_neighbours():
+    quality = pixel_grid_quality(1.0, 0.0, 1e-18, 1e-18, 64, 48)
+    assert quality.safe is False
+    assert quality.x_unique_fraction < 1.0
+    assert quality.maximum_equal_run > 1
+
+
+def test_reference_cache_reanchors_before_relative_grid_collapses():
+    cache = PerturbationReferenceCache()
+    cache.prepare(
+        RenderRequest(
+            width=64,
+            height=48,
+            max_iterations=50,
+            precision=Precision.FLOAT64,
+            render_mode=RenderMode.PERTURBATION,
+            reference_bits=256,
+            center_x_text="-0.5",
+            center_y_text="0.0",
+            view_width_text="3.5",
+            viewport=Viewport(-0.5, 0.0, 3.5),
+        )
+    )
+    deep = cache.prepare(
+        RenderRequest(
+            width=64,
+            height=48,
+            max_iterations=50,
+            precision=Precision.FLOAT64,
+            render_mode=RenderMode.PERTURBATION,
+            reference_bits=256,
+            center_x_text=DEEP_CENTER_X,
+            center_y_text=DEEP_CENTER_Y,
+            view_width_text="1e-16",
+            viewport=Viewport(float(DEEP_CENTER_X), float(DEEP_CENTER_Y), 1e-16),
+        )
+    )
+    assert deep.reference_reanchored_for_grid is True
+    assert deep.reference_reused is False
+    assert deep.grid_quality.safe is True
 
 
 def test_auto_switches_to_perturbation_for_tiny_pixels():
