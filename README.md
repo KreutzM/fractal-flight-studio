@@ -106,6 +106,24 @@ Frames lassen sich reproduzierbar vergleichen:
 Erwartet werden `reference reused: True`, keine Klassifikationsfehler und
 `result: STABLE`.
 
+## Automatische Präzisionsleiter und Fluggrenze
+
+Im Berechnungsmodus **`auto`** ist `float32` die schnelle Startpräzision. Bevor
+die Pixelkoordinaten in diesem Format sichtbar quantisieren, wird der direkte
+Renderer automatisch auf `float64` angehoben. Sobald auch direkte FP64-
+Koordinaten nicht mehr genügend Abstand zwischen benachbarten Pixeln liefern,
+wechselt Mandelbrot automatisch in den Perturbationsmodus. Die Statuszeile
+zeigt Übergänge beispielsweise als `float32→float64` an. **`direct`** bleibt
+absichtlich strikt und führt keine automatische Hochstufung durch.
+
+Ein Flug stoppt jetzt automatisch vor der numerischen Grenze. Die Endbreite
+wird aus der eingestellten Referenzpräzision, der Renderbreite und der weiterhin
+in `float64` ausgewerteten Pixel-Perturbation berechnet. Dadurch werden keine
+Frames mehr erzeugt, bei denen mehrere Pixel dieselbe Koordinate erhalten oder
+die Perturbationsabstände unterlaufen. Höhere **Referenzpräzision (Bits)**
+verschiebt diese Grenze weiter nach innen, kann aber die FP64-Grenze der
+Pixelabweichungen nicht aufheben.
+
 ## Automatisches Tone Mapping
 
 Ab Version 0.7.0 nutzt die App standardmäßig ein automatisches Tone Mapping,
@@ -139,7 +157,7 @@ Python-API stehen außerdem `linear` für die unveränderte Rohdarstellung und
 - Mausrad: hinein- und herauszoomen
 - linke Maustaste ziehen: Ansicht verschieben
 - rechte Maustaste: Flugziel setzen
-- „Flug starten“: kontinuierlich zum Ziel zoomen
+- „Flug starten“: kontinuierlich zum Ziel zoomen; stoppt automatisch an der numerischen Präzisionsgrenze
 - „PNG exportieren“: Bild in aktueller Fensterauflösung speichern
 
 Für normale Vorschau und Flug kann die Render-Skalierung getrennt auf 50 %, 75 % oder 100 % gesetzt werden. Auf CUDA-Systemen ist 100 % voreingestellt; auf CPU-Systemen 75 %. Die Statuszeile trennt Rechnen/Transfer von der Tk-Anzeige.
@@ -245,8 +263,8 @@ GUI / CLI
 RenderRequest + Viewport
    ↓
 Backend-Auswahl (wiederverwendete Instanzen)
-   ├── Numba-CPU → Stichprobe → Tone Mapping → CPU-Farbgebung
-   └── Numba-CUDA → persistente Puffer → kleine GPU-Stichprobe → GPU-Farbgebung
+   ├── Numba-CPU → automatische Präzision → Stichprobe → Tone Mapping → CPU-Farbgebung
+   └── Numba-CUDA → automatische Präzision → persistente Puffer → kleine GPU-Stichprobe → GPU-Farbgebung
    ↓
 RGB-Frame
    ↓
@@ -262,8 +280,8 @@ Die numerische `render()`-Schnittstelle bleibt für Tests und Analysen erhalten.
   wie WebGPU/wgpu oder Qt-RHI sinnvoll.
 - Generische GPU-Beschleunigung für AMD, Intel und Apple ist noch
   nicht implementiert. Auf diesen Systemen arbeitet der Numba-CPU-Renderer.
-- Der Referenzorbit und die hochpräzisen Viewport-Koordinaten werden auf der CPU erzeugt, die Pixelabweichungen selbst aber weiterhin in `float64` ausgewertet. Für noch tiefere Zooms wären Multi-Reference-Verfahren oder Series Approximation ein nächster Schritt.
+- Der Referenzorbit und die hochpräzisen Viewport-Koordinaten werden auf der CPU erzeugt, die Pixelabweichungen selbst aber weiterhin in `float64` ausgewertet. Die App stoppt Flüge deshalb vor der aus Referenzbits und FP64-Perturbation abgeleiteten Grenze. Für noch tiefere Zooms wären skalierte Perturbation, Multi-Reference-Verfahren oder Series Approximation erforderlich.
 - 3D-Fraktale wie Mandelbulb sind noch nicht enthalten.
 
 Diese Grenzen sind bewusst: Das Repo liefert einen vollständig testbaren,
-überschaubaren MVP und eine saubere Basis für WebGPU, Perturbation und 3D.
+überschaubaren MVP und eine saubere Basis für WebGPU, skalierte Perturbation und 3D.

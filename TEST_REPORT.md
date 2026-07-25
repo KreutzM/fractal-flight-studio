@@ -1,6 +1,6 @@
 # Test report
 
-Date: 2026-07-24
+Date: 2026-07-25
 
 ## Environment
 
@@ -11,7 +11,17 @@ Date: 2026-07-24
 - CUDA behavior tested with the Numba CUDA simulator
 - GUI tested with Tk under Xvfb
 
-## Version 0.7.0 changes under test
+## Version 0.7.1 changes under test
+
+- FP32-to-FP64 promotion before direct-coordinate quantization
+- FP64-to-perturbation transition for Mandelbrot auto mode
+- strict precision behavior in explicit direct mode
+- reference-bit and FP64-derived minimum viewport width
+- automatic flight clamp and stop at the numerical limit
+- effective-precision reporting in renderer details and the GUI
+- compatibility with automatic tone mapping and reused renderer instances
+
+## Existing 0.7.0 coverage retained
 
 - automatic robust percentile windowing
 - adaptive `asinh` compression and bounded gamma correction
@@ -28,19 +38,26 @@ Date: 2026-07-24
 ### Static compilation
 
 ```bash
-python -m py_compile src/fractal_flight_studio/*.py \
-  src/fractal_flight_studio/renderers/*.py tests/*.py
+PYTHONPATH=src python -m compileall -q src tests scripts
 ```
 
-Result: passed.
+Result: passed locally.
 
-### Automated test suite
+### Local compatibility suite
+
+The precision-transition implementation was first validated against the complete
+0.6.0 core suite, which contains the unchanged navigation, direct-render and
+perturbation kernels, plus the new regression tests:
 
 ```bash
-PYTHONPATH=src pytest -q
+PYTHONPATH=src python -m pytest -vv
 ```
 
-Result: `39 passed`.
+Result: `37 passed`.
+
+The merged 0.7.0 branch adds the automatic-tone-mapping tests. Together with
+the six new transition tests, the GitHub Actions branch suite is expected to
+contain `45` tests and is the authoritative current-main integration result.
 
 Coverage includes:
 
@@ -61,6 +78,12 @@ Coverage includes:
 - preservation of Newton root encoding
 - CPU/CUDA RGB parity for automatic tone mapping
 - optimized CUDA automatic-tone path with small sample transfer
+- safe FP32 promotion while remaining in direct mode
+- perturbation selection only after the promoted FP64 limit
+- no implicit promotion in explicit direct mode
+- deeper but finite flight floors for higher reference-bit settings
+- final-frame clamping and no further timer scheduling after flight stop
+- renderer-instance reuse with adaptive precision
 - Windows launcher and CUDA diagnostics
 
 ### Pan-stability check
@@ -78,48 +101,25 @@ inside/outside mismatches: 0
 result: STABLE
 ```
 
-### CLI tone-mapping smoke tests
-
-Single image:
-
-```bash
-PYTHONPATH=src python -m fractal_flight_studio.cli render \
-  --backend cpu --width 160 --height 100 --iterations 120 \
-  --tone-mapping auto --output /tmp/ffs-tone.png
-```
-
-Three-frame flight with persistent automatic tone state:
-
-```bash
-PYTHONPATH=src python -m fractal_flight_studio.cli flight \
-  --backend cpu --width 96 --height 64 --iterations 80 \
-  --tone-mapping auto --target-x -0.75 --target-y 0.1 \
-  --target-width 1.5 --frames 3 --output-dir /tmp/ffs-tone-flight
-```
-
-Result: passed; all expected PNG files were created.
-
 ### GUI smoke test
 
 ```bash
 xvfb-run -a env PYTHONPATH=src python scripts/gui_smoke.py
 ```
 
-Result: passed.
+Result: passed locally.
 
 ### Wheel build
 
-```bash
-python -m pip wheel . --no-deps --no-build-isolation -w dist
-```
+The existing GitHub Actions validation job builds the wheel after the test,
+pan-stability and GUI checks. The branch CI result is authoritative for the
+integrated 0.7.1 artifact.
 
-Result: `fractal_flight_studio-0.7.0-py3-none-any.whl` built successfully.
+## Not validated locally
 
-## Not validated here
-
-- physical RTX 3060 throughput and driver-specific behavior
+- physical RTX 3060 performance of the FP32-to-FP64 transition
 - native CUDA PTX/SASS generated on Windows
-- visual tone stability during a long real-time Windows/CUDA flight
+- visual behavior during a long real-time flight on the target system
 - native macOS packaging
 
 Run on the target RTX 3060 system:

@@ -1,15 +1,62 @@
 from __future__ import annotations
 
-from .base import Renderer
+from dataclasses import replace
+
+from ..deep_zoom import effective_direct_precision
+from ..models import Precision, RenderRequest
+from .base import FrameResult, Renderer, RenderResult
 from .cpu import CpuRenderer
 from .cuda_tonemap import CudaRenderer
+
+
+class AdaptivePrecisionRenderer(Renderer):
+    """Promote unsafe float32 auto frames before delegating to a backend."""
+
+    def __init__(self, delegate: Renderer) -> None:
+        self._delegate = delegate
+        self.name = delegate.name
+
+    def is_available(self) -> bool:
+        return self._delegate.is_available()
+
+    @staticmethod
+    def _effective_request(request: RenderRequest) -> tuple[RenderRequest, Precision]:
+        precision = effective_direct_precision(request)
+        if precision is request.precision:
+            return request, precision
+        return replace(request, precision=precision), precision
+
+    @staticmethod
+    def _annotate(result: RenderResult | FrameResult, requested: Precision) -> None:
+        render_mode = result.details.get("render_mode", "direct")
+        effective = (
+            Precision.FLOAT64
+            if render_mode == "perturbation"
+            else Precision(result.details.get("precision", requested.value))
+        )
+        result.details["requested_precision"] = requested.value
+        result.details["precision"] = effective.value
+        result.details["precision_promoted"] = effective is not requested
+
+    def render(self, request: RenderRequest) -> RenderResult:
+        effective_request, _ = self._effective_request(request)
+        result = self._delegate.render(effective_request)
+        self._annotate(result, request.precision)
+        return result
+
+    def render_frame(self, request: RenderRequest, *args, **kwargs) -> FrameResult:
+        effective_request, _ = self._effective_request(request)
+        result = self._delegate.render_frame(effective_request, *args, **kwargs)
+        self._annotate(result, request.precision)
+        return result
+
 
 # Reuse backend instances. In particular, this keeps CUDA contexts, streams and
 # device buffers alive across animation frames instead of reallocating them for
 # every render request. It also preserves temporally smoothed automatic tone
 # parameters across related GUI frames.
-_CPU_RENDERER = CpuRenderer()
-_CUDA_RENDERER = CudaRenderer()
+_CPU_RENDERER = AdaptivePrecisionRenderer(CpuRenderer())
+_CUDA_RENDERER = AdaptivePrecisionRenderer(CudaRenderer())
 
 
 def available_renderers() -> dict[str, Renderer]:

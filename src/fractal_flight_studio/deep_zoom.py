@@ -6,7 +6,7 @@ import math
 import mpmath as mp
 import numpy as np
 
-from .models import FractalKind, RenderMode, RenderRequest
+from .models import FractalKind, Precision, RenderMode, RenderRequest
 
 _LOG10_2 = math.log10(2.0)
 
@@ -23,6 +23,13 @@ MIN_REFERENCE_MAGNITUDE_SQUARED = 1e-300
 # view widths away or zooming substantially outward.
 REFERENCE_PAN_RADIUS = 4.0
 REFERENCE_ZOOM_OUT_LIMIT = 4.0
+
+# Keep a small numerical safety margin before coordinate quantization becomes
+# visible as blocky or single-colour frames. Automatic rendering may promote a
+# requested float32 direct kernel to float64 before perturbation takes over.
+DIRECT_ULP_GUARD = 8.0
+REFERENCE_GUARD_BITS = 16
+PERTURBATION_NORMAL_GUARD = 64.0
 
 
 @dataclass(slots=True)
@@ -95,14 +102,7 @@ def direct_pixel_size(request: RenderRequest) -> float:
     return width / max(1, request.width)
 
 
-def should_use_perturbation(request: RenderRequest) -> bool:
-    if request.fractal is not FractalKind.MANDELBROT:
-        return False
-    if request.render_mode is RenderMode.PERTURBATION:
-        return True
-    if request.render_mode is RenderMode.DIRECT:
-        return False
-    pixel = direct_pixel_size(request)
+def _view_center_as_float(request: RenderRequest) -> tuple[float, float]:
     view = request_view_text(request)
     try:
         cx = float(view.center_x)
@@ -112,8 +112,69 @@ def should_use_perturbation(request: RenderRequest) -> bool:
         cy = float(view.center_y)
     except Exception:
         cy = request.viewport.center_y
-    ulp = max(math.ulp(cx), math.ulp(cy), math.ulp(1.0))
-    return pixel <= ulp * 64.0
+    return cx, cy
+
+
+def _coordinate_ulp(value: float, precision: Precision) -> float:
+    if precision is Precision.FLOAT32:
+        scalar = np.float32(value)
+        if not np.isfinite(scalar):
+            return float("inf")
+        return abs(float(np.spacing(scalar)))
+    if not math.isfinite(value):
+        return float("inf")
+    return math.ulp(value)
+
+
+def direct_precision_pixel_limit(request: RenderRequest, precision: Precision) -> float:
+    """Smallest safe direct-kernel pixel spacing near the current center."""
+    cx, cy = _view_center_as_float(request)
+    ulp = max(_coordinate_ulp(cx, precision), _coordinate_ulp(cy, precision))
+    return ulp * DIRECT_ULP_GUARD
+
+
+def effective_direct_precision(request: RenderRequest) -> Precision:
+    """Promote float32 to float64 before float32 coordinates quantize."""
+    if request.render_mode is not RenderMode.AUTO or request.precision is Precision.FLOAT64:
+        return request.precision
+    if direct_pixel_size(request) <= direct_precision_pixel_limit(request, Precision.FLOAT32):
+        return Precision.FLOAT64
+    return Precision.FLOAT32
+
+
+def should_use_perturbation(request: RenderRequest) -> bool:
+    if request.fractal is not FractalKind.MANDELBROT:
+        return False
+    if request.render_mode is RenderMode.PERTURBATION:
+        return True
+    if request.render_mode is RenderMode.DIRECT:
+        return False
+    precision = effective_direct_precision(request)
+    return direct_pixel_size(request) <= direct_precision_pixel_limit(request, precision)
+
+
+def minimum_safe_view_width(request: RenderRequest) -> mp.mpf:
+    """Return a conservative viewport-width floor for interactive navigation.
+
+    Mandelbrot auto/perturbation mode is limited by both the configured
+    high-precision coordinate budget and normal float64 perturbation deltas.
+    Other modes are limited by the safest available direct kernel.
+    """
+    view = request_view_text(request)
+    if request.fractal is FractalKind.MANDELBROT and request.render_mode is not RenderMode.DIRECT:
+        dps = digits_for_bits(request.reference_bits)
+        with mp.workdps(dps):
+            cx = abs(mp.mpf(view.center_x))
+            cy = abs(mp.mpf(view.center_y))
+            coordinate_scale = max(mp.mpf(1), cx, cy)
+            usable_bits = max(1, int(request.reference_bits) - REFERENCE_GUARD_BITS)
+            reference_pixel_floor = coordinate_scale * mp.power(2, -usable_bits)
+            float64_pixel_floor = mp.mpf(str(np.finfo(np.float64).tiny)) * PERTURBATION_NORMAL_GUARD
+            return max(reference_pixel_floor, float64_pixel_floor) * max(1, request.width)
+
+    precision = Precision.FLOAT64 if request.render_mode is RenderMode.AUTO else request.precision
+    pixel_floor = direct_precision_pixel_limit(request, precision)
+    return mp.mpf(repr(pixel_floor)) * max(1, request.width)
 
 
 def _candidate_offsets() -> tuple[tuple[str, str], ...]:
