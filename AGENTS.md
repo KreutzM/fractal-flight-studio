@@ -37,6 +37,16 @@ xvfb-run -a env PYTHONPATH=src python scripts/gui_smoke.py
 - Any perturbation, reference-cache, viewport, or CUDA-kernel change must run the full test suite and `scripts/check_pan_stability.py`.
 - Do not claim physical CUDA performance or driver compatibility from CUDA-simulator results alone.
 
+## Repository acquisition and GitHub publishing
+
+- Before modifying files, confirm that the working tree represents the current target branch. Prefer a normal up-to-date local clone.
+- If no current clone is available, restore the latest successful repository-snapshot artifact: verify its SHA-256 manifest, run `git bundle verify`, and clone or fetch from the bundle.
+- Never develop against an older snapshot and manually reconstruct the current repository from individual GitHub files.
+- Before connector-based GitHub writes, read and follow `docs/AGENT_GIT_WORKFLOW.md`.
+- For a related multi-file change through the GitHub API, use one atomic Git-data transaction: create all blobs, create one tree based on the current target tree, create one commit with the current target commit as parent, then create or update the feature-branch ref once.
+- Do not use repeated contents-API `update_file` calls for a related multi-file change; each call creates an intermediate commit. Contents-API writes are acceptable for an intentional single-file change.
+- Before opening a pull request, compare the feature branch with the target branch and confirm the expected paths, `behind_by == 0`, and no unrelated changes.
+
 ## Development workflow
 
 - Work on a feature branch and open a pull request; do not commit directly to `main`.
