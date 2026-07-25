@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from concurrent.futures import Future
 import tkinter as tk
+from tkinter import ttk
 
 from .app import FractalStudioApp as BaseFractalStudioApp
 from .deep_zoom import PixelGridExhaustedError
+from .deep_zoom_targets import DeepZoomTarget, favorite_deep_zoom_targets
 from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
 from .models import RenderRequest
 from .renderers import available_renderers
@@ -17,7 +19,91 @@ class FractalStudioApp(BaseFractalStudioApp):
         self.last_good_flight_view: tuple[str, str, str] | None = None
         self.last_good_flight_rgb = None
         self.pending_final_flight_quality_check = False
+        self.deep_zoom_targets = favorite_deep_zoom_targets()
+        self.deep_zoom_targets_by_name = {target.name: target for target in self.deep_zoom_targets}
         super().__init__(root)
+        self._build_deep_zoom_target_bar()
+
+    def _build_deep_zoom_target_bar(self) -> None:
+        existing = self.root.winfo_children()
+        before = existing[0] if existing else None
+        bar = ttk.Frame(self.root, padding=(8, 5))
+        pack_options = {"side": tk.TOP, "fill": tk.X}
+        if before is not None:
+            pack_options["before"] = before
+        bar.pack(**pack_options)
+
+        ttk.Label(bar, text="Deep-Zoom-Ziel:").pack(side=tk.LEFT)
+        first_name = self.deep_zoom_targets[0].name if self.deep_zoom_targets else ""
+        self.deep_zoom_target_var = tk.StringVar(value=first_name)
+        combo = ttk.Combobox(
+            bar,
+            textvariable=self.deep_zoom_target_var,
+            values=tuple(target.name for target in self.deep_zoom_targets),
+            state="readonly",
+            width=29,
+        )
+        combo.pack(side=tk.LEFT, padx=(6, 6))
+        combo.bind("<<ComboboxSelected>>", self._on_deep_zoom_target_selected)
+        ttk.Button(bar, text="Als Flugziel", command=self.set_catalog_flight_target).pack(
+            side=tk.LEFT, padx=(0, 4)
+        )
+        ttk.Button(bar, text="Ansicht laden", command=self.load_catalog_target_view).pack(
+            side=tk.LEFT
+        )
+        self.deep_zoom_target_summary_var = tk.StringVar(value="")
+        ttk.Label(bar, textvariable=self.deep_zoom_target_summary_var, foreground="#555").pack(
+            side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True
+        )
+        self._update_deep_zoom_target_summary()
+
+    def _selected_deep_zoom_target(self) -> DeepZoomTarget | None:
+        return self.deep_zoom_targets_by_name.get(self.deep_zoom_target_var.get())
+
+    def _update_deep_zoom_target_summary(self) -> None:
+        target = self._selected_deep_zoom_target()
+        if target is None:
+            self.deep_zoom_target_summary_var.set("")
+            return
+        self.deep_zoom_target_summary_var.set(
+            f"{target.recommended_iterations} Iter.; {target.reference_bits} Bit; {target.palette}"
+        )
+
+    def _on_deep_zoom_target_selected(self, _event: tk.Event | None = None) -> None:
+        self._update_deep_zoom_target_summary()
+
+    def _apply_deep_zoom_target(self, target: DeepZoomTarget, *, load_view: bool) -> None:
+        if self.flight_running:
+            self._stop_flight()
+        self.fractal_var.set(target.fractal.value)
+        self.iterations_var.set(target.recommended_iterations)
+        self.reference_bits_var.set(target.reference_bits)
+        self.palette_var.set(target.palette)
+        self.flight_target_text = (target.center_x_text, target.center_y_text)
+
+        action = "als Flugziel gesetzt"
+        if load_view:
+            self.center_x_text = target.center_x_text
+            self.center_y_text = target.center_y_text
+            self.view_width_text = target.view_width_text
+            action = "geladen und als Flugziel gesetzt"
+            self.request_render()
+
+        self.position_var.set(
+            f"{target.name} {action}.\n"
+            f"Zentrum: {target.center_x_text}, {target.center_y_text}; "
+            f"Breite: {target.view_width_text}"
+        )
+
+    def set_catalog_flight_target(self) -> None:
+        target = self._selected_deep_zoom_target()
+        if target is not None:
+            self._apply_deep_zoom_target(target, load_view=False)
+
+    def load_catalog_target_view(self) -> None:
+        target = self._selected_deep_zoom_target()
+        if target is not None:
+            self._apply_deep_zoom_target(target, load_view=True)
 
     def toggle_flight(self) -> None:
         starting = not self.flight_running and self.flight_target_text is not None
