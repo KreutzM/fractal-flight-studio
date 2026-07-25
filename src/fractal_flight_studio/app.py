@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-from concurrent.futures import Future, ThreadPoolExecutor
-import math
+from concurrent.futures import Future
 import time
 import tkinter as tk
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox
 
 import mpmath as mp
 from PIL import Image, ImageTk
 
+from .app_ui import build_ui
+from .camera import CameraState
 from .deep_zoom import digits_for_bits, effective_direct_precision, minimum_safe_view_width
+from .flight_controller import FlightController
 from .gpu_info import inspect_cuda
-from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
-from .palettes import palette_names
+from .models import FractalKind, Precision, RenderMode, RenderRequest
+from .render_controller import RenderController
 from .renderers import available_renderers, select_renderer
 
 
@@ -23,20 +25,15 @@ class FractalStudioApp:
         self.root.geometry("1260x820")
         self.root.minsize(900, 600)
 
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="fractal-render")
-        self.render_generation = 0
-        self.render_in_progress = False
+        self.render_controller = RenderController()
+        self.flight_controller = FlightController()
         self.last_rgb = None
         self.photo: ImageTk.PhotoImage | None = None
         self.drag_start: tuple[int, int] | None = None
-        self.flight_running = False
-        self.flight_target_text: tuple[str, str] | None = None
         self.last_frame_time = time.perf_counter()
         self.cuda_status = inspect_cuda()
 
-        self.center_x_text = "-0.5"
-        self.center_y_text = "0.0"
-        self.view_width_text = "3.5"
+        self.camera = CameraState()
 
         self._build_ui()
         self._bind_events()
@@ -44,185 +41,7 @@ class FractalStudioApp:
         self.root.after(100, self.request_render)
 
     def _build_ui(self) -> None:
-        outer = ttk.Panedwindow(self.root, orient=tk.HORIZONTAL)
-        outer.pack(fill=tk.BOTH, expand=True)
-
-        controls = ttk.Frame(outer, padding=10)
-        viewer = ttk.Frame(outer)
-        outer.add(controls, weight=0)
-        outer.add(viewer, weight=1)
-
-        self.canvas = tk.Canvas(viewer, background="#080808", highlightthickness=0)
-        self.canvas.pack(fill=tk.BOTH, expand=True)
-
-        self.fractal_var = tk.StringVar(value=FractalKind.MANDELBROT.value)
-        self.backend_var = tk.StringVar(value="auto")
-        self.precision_var = tk.StringVar(value=Precision.FLOAT32.value)
-        self.render_mode_var = tk.StringVar(value=RenderMode.AUTO.value)
-        self.reference_bits_var = tk.IntVar(value=256)
-        self.palette_var = tk.StringVar(value="inferno")
-        self.iterations_var = tk.IntVar(value=400)
-        self.cycles_var = tk.DoubleVar(value=1.0)
-        self.julia_real_var = tk.DoubleVar(value=-0.8)
-        self.julia_imag_var = tk.DoubleVar(value=0.156)
-        self.exponent_var = tk.IntVar(value=3)
-        default_scale = 1.0 if self.cuda_status.available else 0.75
-        self.preview_scale_var = tk.DoubleVar(value=default_scale)
-        self.flight_scale_var = tk.DoubleVar(value=default_scale)
-        self.flight_rate_var = tk.DoubleVar(value=1.035)
-        self.status_var = tk.StringVar(value="Initialisierung …")
-        self.position_var = tk.StringVar(value="")
-
-        row = 0
-        ttk.Label(controls, text="Fraktal", font=("TkDefaultFont", 11, "bold")).grid(row=row, column=0, sticky="w")
-        row += 1
-        ttk.Combobox(
-            controls,
-            textvariable=self.fractal_var,
-            values=[f.value for f in FractalKind],
-            state="readonly",
-            width=20,
-        ).grid(row=row, column=0, sticky="ew", pady=(2, 8))
-        row += 1
-
-        ttk.Label(controls, text="Backend").grid(row=row, column=0, sticky="w")
-        row += 1
-        ttk.Combobox(
-            controls,
-            textvariable=self.backend_var,
-            values=("auto", "cpu", "cuda"),
-            state="readonly",
-        ).grid(row=row, column=0, sticky="ew", pady=(2, 8))
-        row += 1
-
-        ttk.Label(controls, text="Präzision").grid(row=row, column=0, sticky="w")
-        row += 1
-        ttk.Combobox(
-            controls,
-            textvariable=self.precision_var,
-            values=[p.value for p in Precision],
-            state="readonly",
-        ).grid(row=row, column=0, sticky="ew", pady=(2, 8))
-        row += 1
-
-        ttk.Label(controls, text="Berechnungsmodus").grid(row=row, column=0, sticky="w")
-        row += 1
-        ttk.Combobox(
-            controls,
-            textvariable=self.render_mode_var,
-            values=[m.value for m in RenderMode],
-            state="readonly",
-        ).grid(row=row, column=0, sticky="ew", pady=(2, 8))
-        row += 1
-
-        ttk.Label(controls, text="Referenzpräzision (Bits)").grid(row=row, column=0, sticky="w")
-        row += 1
-        ttk.Combobox(
-            controls,
-            textvariable=self.reference_bits_var,
-            values=(128, 192, 256, 384, 512, 768, 1024),
-            state="readonly",
-        ).grid(row=row, column=0, sticky="ew", pady=(2, 8))
-        row += 1
-
-        ttk.Label(controls, text="Vorschau-Skalierung").grid(row=row, column=0, sticky="w")
-        row += 1
-        ttk.Combobox(
-            controls,
-            textvariable=self.preview_scale_var,
-            values=(0.5, 0.75, 1.0),
-            state="readonly",
-        ).grid(row=row, column=0, sticky="ew", pady=(2, 8))
-        row += 1
-
-        ttk.Label(controls, text="Iterationen").grid(row=row, column=0, sticky="w")
-        row += 1
-        ttk.Spinbox(controls, from_=20, to=100000, textvariable=self.iterations_var, increment=20).grid(
-            row=row, column=0, sticky="ew", pady=(2, 8)
-        )
-        row += 1
-
-        ttk.Label(controls, text="Palette").grid(row=row, column=0, sticky="w")
-        row += 1
-        ttk.Combobox(
-            controls,
-            textvariable=self.palette_var,
-            values=palette_names(),
-            state="readonly",
-        ).grid(row=row, column=0, sticky="ew", pady=(2, 8))
-        row += 1
-
-        ttk.Label(controls, text="Farbzyklen").grid(row=row, column=0, sticky="w")
-        row += 1
-        ttk.Scale(controls, from_=0.25, to=8.0, variable=self.cycles_var, orient=tk.HORIZONTAL).grid(
-            row=row, column=0, sticky="ew", pady=(2, 8)
-        )
-        row += 1
-
-        julia = ttk.LabelFrame(controls, text="Julia / Multibrot", padding=6)
-        julia.grid(row=row, column=0, sticky="ew", pady=6)
-        ttk.Label(julia, text="c real").grid(row=0, column=0, sticky="w")
-        ttk.Entry(julia, textvariable=self.julia_real_var, width=12).grid(row=0, column=1)
-        ttk.Label(julia, text="c imag").grid(row=1, column=0, sticky="w")
-        ttk.Entry(julia, textvariable=self.julia_imag_var, width=12).grid(row=1, column=1)
-        ttk.Label(julia, text="Exponent").grid(row=2, column=0, sticky="w")
-        ttk.Spinbox(julia, from_=2, to=8, textvariable=self.exponent_var, width=10).grid(row=2, column=1)
-        row += 1
-
-        flight = ttk.LabelFrame(controls, text="Flug", padding=6)
-        flight.grid(row=row, column=0, sticky="ew", pady=6)
-        ttk.Label(flight, text="Zoom pro Frame").grid(row=0, column=0, sticky="w")
-        ttk.Entry(flight, textvariable=self.flight_rate_var, width=10).grid(row=0, column=1)
-        ttk.Label(flight, text="Render-Skalierung").grid(row=1, column=0, sticky="w")
-        ttk.Combobox(
-            flight,
-            textvariable=self.flight_scale_var,
-            values=(0.5, 0.75, 1.0),
-            state="readonly",
-            width=8,
-        ).grid(row=1, column=1)
-        self.flight_button = ttk.Button(flight, text="Flug starten", command=self.toggle_flight)
-        self.flight_button.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-        ttk.Label(flight, text="Rechtsklick setzt Ziel", foreground="#555").grid(
-            row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
-        )
-        row += 1
-
-        buttons = ttk.Frame(controls)
-        buttons.grid(row=row, column=0, sticky="ew", pady=(8, 4))
-        ttk.Button(buttons, text="Rendern", command=self.request_render).pack(side=tk.LEFT, expand=True, fill=tk.X)
-        ttk.Button(buttons, text="Reset", command=self.reset_view).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=4)
-        row += 1
-        ttk.Button(controls, text="PNG exportieren", command=self.export_png).grid(row=row, column=0, sticky="ew")
-        row += 1
-        ttk.Button(controls, text="GPU-Diagnose", command=self.show_gpu_diagnostics).grid(
-            row=row, column=0, sticky="ew", pady=(4, 0)
-        )
-        row += 1
-
-        ttk.Separator(controls).grid(row=row, column=0, sticky="ew", pady=8)
-        row += 1
-        ttk.Label(controls, textvariable=self.status_var, wraplength=240).grid(row=row, column=0, sticky="w")
-        row += 1
-        ttk.Label(controls, textvariable=self.position_var, wraplength=240).grid(row=row, column=0, sticky="w", pady=(4, 0))
-        controls.columnconfigure(0, weight=1)
-
-        for variable in (
-            self.fractal_var,
-            self.backend_var,
-            self.precision_var,
-            self.render_mode_var,
-            self.reference_bits_var,
-            self.palette_var,
-            self.iterations_var,
-            self.cycles_var,
-            self.julia_real_var,
-            self.julia_imag_var,
-            self.exponent_var,
-            self.preview_scale_var,
-            self.flight_scale_var,
-        ):
-            variable.trace_add("write", lambda *_: self.root.after_idle(self.request_render))
+        build_ui(self)
 
     def _bind_events(self) -> None:
         self.canvas.bind("<Configure>", lambda _event: self.request_render())
@@ -245,66 +64,34 @@ class FractalStudioApp:
     def _format_display(value: mp.mpf, digits: int = 14) -> str:
         return mp.nstr(value, n=digits)
 
-    def _view_values(self) -> tuple[mp.mpf, mp.mpf, mp.mpf]:
-        with mp.workdps(self._work_digits()):
-            return (
-                mp.mpf(self.center_x_text),
-                mp.mpf(self.center_y_text),
-                mp.mpf(self.view_width_text),
-            )
-
-    def _set_view_values(self, center_x: mp.mpf, center_y: mp.mpf, width: mp.mpf) -> None:
-        self.center_x_text = self._format_precise(center_x)
-        self.center_y_text = self._format_precise(center_y)
-        self.view_width_text = self._format_precise(width)
-
-    def _proxy_float(self, text: str, minimum_positive: float | None = None) -> float:
-        with mp.workdps(self._work_digits()):
-            value = mp.mpf(text)
-        try:
-            converted = float(value)
-        except OverflowError:
-            converted = math.copysign(float("inf"), float(value))
-        if minimum_positive is not None and converted == 0.0 and value > 0:
-            return minimum_positive
-        return converted
-
     def _pixel_to_complex_hp(self, px: float, py: float) -> tuple[mp.mpf, mp.mpf]:
-        canvas_width = max(1, self.canvas.winfo_width())
-        canvas_height = max(1, self.canvas.winfo_height())
-        with mp.workdps(self._work_digits()):
-            center_x, center_y, width = self._view_values()
-            aspect = mp.mpf(canvas_height) / mp.mpf(canvas_width)
-            x = center_x + (mp.mpf(px) / canvas_width - mp.mpf("0.5")) * width
-            y = center_y + (mp.mpf(py) / canvas_height - mp.mpf("0.5")) * width * aspect
-            return x, y
+        return self.camera.pixel_to_complex(
+            px,
+            py,
+            max(1, self.canvas.winfo_width()),
+            max(1, self.canvas.winfo_height()),
+            digits=self._work_digits(),
+        )
 
     def _zoom_view_hp(self, px: float, py: float, factor: float) -> None:
         if factor <= 0:
             return
-        with mp.workdps(self._work_digits()):
-            before_x, before_y = self._pixel_to_complex_hp(px, py)
-            center_x, center_y, width = self._view_values()
-            width = width / mp.mpf(factor)
-            self._set_view_values(center_x, center_y, width)
-            after_x, after_y = self._pixel_to_complex_hp(px, py)
-            center_x, center_y, width = self._view_values()
-            self._set_view_values(
-                center_x + before_x - after_x,
-                center_y + before_y - after_y,
-                width,
-            )
+        self.camera = self.camera.zoom_at(
+            px,
+            py,
+            max(1, self.canvas.winfo_width()),
+            max(1, self.canvas.winfo_height()),
+            factor,
+            digits=self._work_digits(),
+        )
 
     def _pan_view_hp(self, dx_pixels: float, dy_pixels: float) -> None:
-        canvas_width = max(1, self.canvas.winfo_width())
-        with mp.workdps(self._work_digits()):
-            center_x, center_y, width = self._view_values()
-            units_per_pixel = width / canvas_width
-            self._set_view_values(
-                center_x - mp.mpf(dx_pixels) * units_per_pixel,
-                center_y - mp.mpf(dy_pixels) * units_per_pixel,
-                width,
-            )
+        self.camera = self.camera.pan_pixels(
+            dx_pixels,
+            dy_pixels,
+            max(1, self.canvas.winfo_width()),
+            digits=self._work_digits(),
+        )
 
     def _request(self, scale: float | None = None) -> RenderRequest:
         scale = self.preview_scale_var.get() if scale is None else scale
@@ -312,11 +99,7 @@ class FractalStudioApp:
         canvas_height = max(64, self.canvas.winfo_height())
         width = max(64, int(canvas_width * scale))
         height = max(64, int(canvas_height * scale))
-        proxy_viewport = Viewport(
-            center_x=self._proxy_float(self.center_x_text),
-            center_y=self._proxy_float(self.center_y_text),
-            width=self._proxy_float(self.view_width_text, minimum_positive=1e-300),
-        )
+        proxy_viewport = self.camera.proxy_viewport(digits=self._work_digits())
         return RenderRequest(
             width=width,
             height=height,
@@ -329,17 +112,17 @@ class FractalStudioApp:
             precision=Precision(self.precision_var.get()),
             render_mode=RenderMode(self.render_mode_var.get()),
             reference_bits=int(self.reference_bits_var.get()),
-            center_x_text=self.center_x_text,
-            center_y_text=self.center_y_text,
-            view_width_text=self.view_width_text,
+            center_x_text=self.camera.center_x_text,
+            center_y_text=self.camera.center_y_text,
+            view_width_text=self.camera.view_width_text,
         )
 
     def request_render(self) -> None:
-        self.render_generation += 1
-        if self.render_in_progress:
+        self.render_controller.invalidate()
+        if self.render_controller.busy:
             return
         try:
-            scale = self.flight_scale_var.get() if self.flight_running else self.preview_scale_var.get()
+            scale = self.flight_scale_var.get() if self.flight_controller.running else self.preview_scale_var.get()
             request = self._request(scale)
             backend_name = self.backend_var.get()
             renderer = select_renderer(backend_name)
@@ -349,12 +132,15 @@ class FractalStudioApp:
             self.status_var.set(str(exc))
             return
 
-        self.render_in_progress = True
-        generation = self.render_generation
+        submission = self.render_controller.submit(
+            lambda: renderer.render_frame(request, palette, cycles, 0.0)
+        )
+        if submission is None:
+            return
+        generation, future = submission
         self.status_var.set(
             f"Rendere mit {renderer.name} ({request.width}×{request.height}, {request.precision.value}, {request.render_mode.value}) …"
         )
-        future = self.executor.submit(renderer.render_frame, request, palette, cycles, 0.0)
         self.root.after(10, self._poll_render, future, generation, request)
 
     def _poll_render(self, future: Future, generation: int, request: RenderRequest) -> None:
@@ -364,7 +150,7 @@ class FractalStudioApp:
         self.root.after(20, self._poll_render, future, generation, request)
 
     def _finish_render(self, future: Future, generation: int, request: RenderRequest) -> None:
-        self.render_in_progress = False
+        render_invalidated = self.render_controller.complete(generation)
         try:
             result = future.result()
             rgb = result.rgb
@@ -431,12 +217,12 @@ class FractalStudioApp:
                 f"Anzeige {display_seconds * 1000:.1f} ms; ca. {fps:.1f} FPS"
                 f"{allocation_line}{upload_line}{deep_line}"
                 f"{device_line}{fallback_line}\n"
-                f"Rendergröße: {rgb.shape[1]}×{rgb.shape[0]}; Ansichtsbreite: {self.view_width_text}"
+                f"Rendergröße: {rgb.shape[1]}×{rgb.shape[0]}; Ansichtsbreite: {self.camera.view_width_text}"
             )
         except Exception as exc:
             self.status_var.set(f"Renderfehler: {exc}")
 
-        if generation != self.render_generation:
+        if render_invalidated:
             self.request_render()
 
     def _mousewheel(self, event: tk.Event) -> None:
@@ -463,37 +249,42 @@ class FractalStudioApp:
 
     def _set_flight_target(self, event: tk.Event) -> None:
         x, y = self._pixel_to_complex_hp(event.x, event.y)
-        self.flight_target_text = (self._format_precise(x), self._format_precise(y))
+        self.flight_controller.set_target(
+            self._format_precise(x),
+            self._format_precise(y),
+        )
         self.position_var.set(
             f"Flugziel: {self._format_display(x, 16)}, {self._format_display(y, 16)}"
         )
 
     def _show_coordinate(self, event: tk.Event) -> None:
         x, y = self._pixel_to_complex_hp(event.x, event.y)
-        target = " gesetzt" if self.flight_target_text else " nicht gesetzt"
+        target = " gesetzt" if self.flight_controller.target_text else " nicht gesetzt"
         self.position_var.set(
             f"Cursor: {self._format_display(x, 12)}, {self._format_display(y, 12)}\n"
             f"Flugziel:{target}"
         )
 
     def _stop_flight(self, message: str | None = None) -> None:
-        self.flight_running = False
+        numerical_limit = bool(message and "numerische Präzisionsgrenze" in message)
+        self.flight_controller.stop(numerical_limit=numerical_limit)
         self.flight_button.configure(text="Flug starten")
         if message:
             self.position_var.set(message)
 
     def toggle_flight(self) -> None:
-        if not self.flight_running and self.flight_target_text is None:
+        if self.flight_controller.running:
+            self._stop_flight()
+            return
+        if not self.flight_controller.start(self.camera, self.last_rgb):
             messagebox.showinfo("Flugziel", "Setze zuerst mit Rechtsklick ein Flugziel.")
             return
-        self.flight_running = not self.flight_running
-        self.flight_button.configure(text="Flug stoppen" if self.flight_running else "Flug starten")
-        if self.flight_running:
-            self.last_frame_time = time.perf_counter()
-            self._flight_step()
+        self.flight_button.configure(text="Flug stoppen")
+        self.last_frame_time = time.perf_counter()
+        self._flight_step()
 
     def _flight_step(self) -> None:
-        if not self.flight_running or self.flight_target_text is None:
+        if not self.flight_controller.running or self.flight_controller.target_text is None:
             return
         try:
             rate = max(1.0001, float(self.flight_rate_var.get()))
@@ -501,20 +292,15 @@ class FractalStudioApp:
             rate = 1.035
         request = self._request(self.flight_scale_var.get())
         minimum_width = minimum_safe_view_width(request)
-        with mp.workdps(self._work_digits()):
-            center_x, center_y, width = self._view_values()
-            tx = mp.mpf(self.flight_target_text[0])
-            ty = mp.mpf(self.flight_target_text[1])
-            attraction = mp.mpf("0.08")
-            next_width = width / mp.mpf(rate)
-            reached_limit = next_width <= minimum_width
-            self._set_view_values(
-                center_x + (tx - center_x) * attraction,
-                center_y + (ty - center_y) * attraction,
-                minimum_width if reached_limit else next_width,
-            )
+        step = self.flight_controller.step(
+            self.camera,
+            zoom_rate=rate,
+            minimum_width=minimum_width,
+            digits=self._work_digits(),
+        )
+        self.camera = step.camera
         self.request_render()
-        if reached_limit:
+        if step.reached_limit:
             self._stop_flight(
                 "Flug automatisch gestoppt: numerische Präzisionsgrenze erreicht.\n"
                 f"Mindestbreite: {mp.nstr(minimum_width, 8)}; "
@@ -524,13 +310,7 @@ class FractalStudioApp:
         self.root.after(33, self._flight_step)
 
     def reset_view(self) -> None:
-        kind = FractalKind(self.fractal_var.get())
-        if kind is FractalKind.NEWTON:
-            self.center_x_text, self.center_y_text, self.view_width_text = "0.0", "0.0", "4.0"
-        elif kind is FractalKind.BURNING_SHIP:
-            self.center_x_text, self.center_y_text, self.view_width_text = "-0.5", "-0.5", "3.5"
-        else:
-            self.center_x_text, self.center_y_text, self.view_width_text = "-0.5", "0.0", "3.5"
+        self.camera = CameraState.for_fractal(FractalKind(self.fractal_var.get()))
         self.request_render()
 
     def show_gpu_diagnostics(self) -> None:
@@ -551,8 +331,8 @@ class FractalStudioApp:
             messagebox.showerror("Exportfehler", str(exc))
 
     def _on_close(self) -> None:
-        self.flight_running = False
-        self.executor.shutdown(wait=False, cancel_futures=True)
+        self.flight_controller.stop()
+        self.render_controller.shutdown()
         self.root.destroy()
 
 

@@ -13,7 +13,7 @@ def main() -> int:
     assert len(app.deep_zoom_targets) == 10
     assert app.deep_zoom_target_var.get() == app.deep_zoom_targets[0].name
     app.set_catalog_flight_target()
-    assert app.flight_target_text == (
+    assert app.flight_controller.target_text == (
         app.deep_zoom_targets[0].center_x_text,
         app.deep_zoom_targets[0].center_y_text,
     )

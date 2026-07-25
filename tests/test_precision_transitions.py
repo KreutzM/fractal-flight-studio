@@ -5,7 +5,9 @@ from types import SimpleNamespace
 import mpmath as mp
 import numpy as np
 
+from fractal_flight_studio.camera import CameraState
 from fractal_flight_studio.flight_app import FractalStudioApp
+from fractal_flight_studio.flight_controller import FlightController
 from fractal_flight_studio.deep_zoom import (
     PixelGridExhaustedError,
     digits_for_bits,
@@ -15,6 +17,7 @@ from fractal_flight_studio.deep_zoom import (
     should_use_perturbation,
 )
 from fractal_flight_studio.models import Precision, RenderMode, RenderRequest, Viewport
+from fractal_flight_studio.render_controller import RenderController
 from fractal_flight_studio.renderers import select_renderer
 
 DEEP_CENTER_X = "-0.743643887037158704752191506114774"
@@ -132,6 +135,57 @@ def test_cpu_auto_reports_float32_to_float64_promotion():
     assert result.details["pixel_grid_safe"] is True
 
 
+class _UnusedExecutor:
+    def submit(self, _job):
+        raise AssertionError("this test must not submit work")
+
+
+def _flight_adapter(
+    *,
+    generation: int,
+    running: bool,
+    pending_final: bool,
+    current_camera: CameraState,
+    current_rgb: np.ndarray,
+    good_camera: CameraState,
+    good_rgb: np.ndarray,
+):
+    render_controller = RenderController(executor=_UnusedExecutor())
+    for _ in range(generation):
+        render_controller.invalidate()
+    flight_controller = FlightController()
+    flight_controller.set_target(DEEP_CENTER_X, DEEP_CENTER_Y)
+    flight_controller.running = running
+    flight_controller.pending_final_quality_check = pending_final
+    flight_controller.last_good_camera = good_camera
+    flight_controller.last_good_rgb = good_rgb
+    app = SimpleNamespace(
+        render_controller=render_controller,
+        flight_controller=flight_controller,
+        camera=current_camera,
+        last_rgb=current_rgb,
+        stop_message=None,
+        request_count=0,
+        status_var=SimpleNamespace(set=lambda _value: None),
+    )
+
+    def stop_flight(message=None):
+        flight_controller.stop()
+        app.stop_message = message
+
+    app._stop_flight = stop_flight
+    app._restore_last_good_flight_frame = (
+        lambda error=None, visual=None: FractalStudioApp._restore_last_good_flight_frame(
+            app, error, visual
+        )
+    )
+    app._should_check_flight_result = (
+        lambda value: FractalStudioApp._should_check_flight_result(app, value)
+    )
+    app.request_render = lambda: setattr(app, "request_count", app.request_count + 1)
+    return app
+
+
 def test_flight_rejects_bad_grid_and_restores_last_good_frame():
     request = RenderRequest(
         width=64,
@@ -142,41 +196,31 @@ def test_flight_rejects_bad_grid_and_restores_last_good_frame():
     )
     good_rgb = np.zeros((48, 64, 3), dtype=np.uint8)
     quality = pixel_grid_quality(1.0, 0.0, 1e-18, 1e-18, 64, 48)
-    future = SimpleNamespace(result=lambda: (_ for _ in ()).throw(PixelGridExhaustedError(quality)))
-    app = SimpleNamespace(
-        render_in_progress=True,
-        flight_running=True,
-        last_good_flight_view=("-0.75", "0.1", "1e-15"),
-        last_good_flight_rgb=good_rgb,
-        last_rgb=np.full((48, 64, 3), 255, dtype=np.uint8),
-        center_x_text=DEEP_CENTER_X,
-        center_y_text=DEEP_CENTER_Y,
-        view_width_text="1e-20",
-        render_generation=3,
-        pending_final_flight_quality_check=False,
-        stop_message=None,
-        request_count=0,
+    future = SimpleNamespace(
+        result=lambda: (_ for _ in ()).throw(PixelGridExhaustedError(quality))
     )
-
-    def stop_flight(message=None):
-        app.flight_running = False
-        app.stop_message = message
-
-    app._stop_flight = stop_flight
-    app._restore_last_good_flight_frame = lambda error: FractalStudioApp._restore_last_good_flight_frame(app, error)
-    app._should_check_flight_result = lambda generation: FractalStudioApp._should_check_flight_result(app, generation)
-    app.request_render = lambda: setattr(app, "request_count", app.request_count + 1)
+    good_camera = CameraState("-0.75", "0.1", "1e-15")
+    app = _flight_adapter(
+        generation=3,
+        running=True,
+        pending_final=False,
+        current_camera=CameraState(DEEP_CENTER_X, DEEP_CENTER_Y, "1e-20"),
+        current_rgb=np.full((48, 64, 3), 255, dtype=np.uint8),
+        good_camera=good_camera,
+        good_rgb=good_rgb,
+    )
 
     FractalStudioApp._finish_render(app, future, 3, request)
 
-    assert app.flight_running is False
-    assert (app.center_x_text, app.center_y_text, app.view_width_text) == app.last_good_flight_view
+    assert app.flight_controller.running is False
+    assert app.camera == good_camera
     assert app.last_rgb is good_rgb
     assert "nicht mehr sinnvoll aufgelöst" in app.stop_message
     assert "größter Block" in app.stop_message
     assert app.request_count == 1
 
-def test_flight_stops_at_numerical_precision_floor():
+
+def test_flight_controller_clamps_at_numerical_precision_floor():
     bits = 64
     base_request = RenderRequest(
         width=100,
@@ -191,48 +235,23 @@ def test_flight_stops_at_numerical_precision_floor():
     )
     floor = minimum_safe_view_width(base_request)
     current_width = floor * mp.mpf("1.01")
-    request = RenderRequest(
-        width=base_request.width,
-        height=base_request.height,
-        viewport=Viewport(-0.5, 0.0, float(current_width)),
-        precision=base_request.precision,
-        render_mode=base_request.render_mode,
-        reference_bits=bits,
-        center_x_text="-0.5",
-        center_y_text="0.0",
-        view_width_text=mp.nstr(current_width, 40),
+    camera = CameraState("-0.5", "0.0", mp.nstr(current_width, 40))
+    controller = FlightController()
+    controller.set_target("-0.5", "0.0")
+    assert controller.start(camera, None)
+
+    step = controller.step(
+        camera,
+        zoom_rate=1.035,
+        minimum_width=floor,
+        digits=digits_for_bits(bits),
     )
 
-    app = SimpleNamespace()
-    app.flight_running = True
-    app.flight_target_text = ("-0.5", "0.0")
-    app.flight_rate_var = _Var(1.035)
-    app.flight_scale_var = _Var(1.0)
-    app.reference_bits_var = _Var(bits)
-    app.root = _Root()
-    app._work_digits = lambda: digits_for_bits(bits)
-    app._request = lambda _scale: request
-    app._view_values = lambda: (mp.mpf("-0.5"), mp.mpf("0.0"), current_width)
-    app.final_view = None
-    app._set_view_values = lambda x, y, width: setattr(app, "final_view", (x, y, width))
-    app.render_count = 0
-    app.request_render = lambda: setattr(app, "render_count", app.render_count + 1)
-    app.stop_message = None
-
-    def stop_flight(message=None):
-        app.flight_running = False
-        app.stop_message = message
-
-    app._stop_flight = stop_flight
-
-    FractalStudioApp._flight_step(app)
-
-    assert app.flight_running is False
-    assert app.render_count == 1
-    assert app.root.after_calls == []
-    assert app.final_view is not None
-    assert app.final_view[2] == floor
-    assert "Präzisionsgrenze" in app.stop_message
+    assert step.reached_limit is True
+    assert mp.mpf(step.camera.view_width_text) == floor
+    controller.stop(numerical_limit=True)
+    assert controller.running is False
+    assert controller.pending_final_quality_check is True
 
 
 def test_flight_rejects_blocky_rgb_candidate_before_display():
@@ -247,35 +266,26 @@ def test_flight_rejects_blocky_rgb_candidate_before_display():
     blocky_rgb = np.repeat(np.repeat(source, 4, axis=0), 4, axis=1)
     good_rgb = np.zeros((48, 64, 3), dtype=np.uint8)
     future = SimpleNamespace(
-        result=lambda: SimpleNamespace(rgb=blocky_rgb, details={}, backend="cpu-numba", elapsed_seconds=0.01)
+        result=lambda: SimpleNamespace(
+            rgb=blocky_rgb,
+            details={},
+            backend="cpu-numba",
+            elapsed_seconds=0.01,
+        )
     )
-    app = SimpleNamespace(
-        render_in_progress=True,
-        flight_running=True,
-        last_good_flight_view=("-0.75", "0.1", "1e-15"),
-        last_good_flight_rgb=good_rgb,
-        last_rgb=blocky_rgb,
-        center_x_text=DEEP_CENTER_X,
-        center_y_text=DEEP_CENTER_Y,
-        view_width_text="1e-20",
-        render_generation=3,
-        pending_final_flight_quality_check=False,
-        stop_message=None,
-        request_count=0,
+    app = _flight_adapter(
+        generation=3,
+        running=True,
+        pending_final=False,
+        current_camera=CameraState(DEEP_CENTER_X, DEEP_CENTER_Y, "1e-20"),
+        current_rgb=blocky_rgb,
+        good_camera=CameraState("-0.75", "0.1", "1e-15"),
+        good_rgb=good_rgb,
     )
-
-    def stop_flight(message=None):
-        app.flight_running = False
-        app.stop_message = message
-
-    app._stop_flight = stop_flight
-    app._restore_last_good_flight_frame = lambda error=None, visual=None: FractalStudioApp._restore_last_good_flight_frame(app, error, visual)
-    app._should_check_flight_result = lambda generation: FractalStudioApp._should_check_flight_result(app, generation)
-    app.request_render = lambda: setattr(app, "request_count", app.request_count + 1)
 
     FractalStudioApp._finish_render(app, future, 3, request)
 
-    assert app.flight_running is False
+    assert app.flight_controller.running is False
     assert app.last_rgb is good_rgb
     assert "wiederholtes zweidimensionales Pixelraster" in app.stop_message
     assert app.request_count == 1
@@ -289,36 +299,25 @@ def test_numerically_clamped_final_frame_still_passes_visual_gate():
     good_rgb = np.full((24, 32, 3), 17, dtype=np.uint8)
     future = SimpleNamespace(
         result=lambda: SimpleNamespace(
-            rgb=blocky_rgb, details={}, backend="cpu-numba", elapsed_seconds=0.01
+            rgb=blocky_rgb,
+            details={},
+            backend="cpu-numba",
+            elapsed_seconds=0.01,
         )
     )
-    app = SimpleNamespace(
-        render_in_progress=True,
-        flight_running=False,
-        pending_final_flight_quality_check=True,
-        last_good_flight_view=("-0.75", "0.1", "1e-15"),
-        last_good_flight_rgb=good_rgb,
-        last_rgb=blocky_rgb,
-        center_x_text="-0.75",
-        center_y_text="0.1",
-        view_width_text="1e-70",
-        render_generation=9,
-        stop_message=None,
-        request_count=0,
+    app = _flight_adapter(
+        generation=9,
+        running=False,
+        pending_final=True,
+        current_camera=CameraState("-0.75", "0.1", "1e-70"),
+        current_rgb=blocky_rgb,
+        good_camera=CameraState("-0.75", "0.1", "1e-15"),
+        good_rgb=good_rgb,
     )
-
-    def stop_flight(message=None):
-        app.flight_running = False
-        app.stop_message = message
-
-    app._stop_flight = stop_flight
-    app._restore_last_good_flight_frame = lambda error=None, visual=None: FractalStudioApp._restore_last_good_flight_frame(app, error, visual)
-    app._should_check_flight_result = lambda generation: FractalStudioApp._should_check_flight_result(app, generation)
-    app.request_render = lambda: setattr(app, "request_count", app.request_count + 1)
 
     FractalStudioApp._finish_render(app, future, 9, request)
 
-    assert app.pending_final_flight_quality_check is False
+    assert app.flight_controller.pending_final_quality_check is False
     assert app.last_rgb is good_rgb
     assert "nicht mehr sinnvoll aufgelöst" in app.stop_message
     assert app.request_count == 1

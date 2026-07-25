@@ -5,6 +5,7 @@ import tkinter as tk
 from tkinter import ttk
 
 from .app import FractalStudioApp as BaseFractalStudioApp
+from .camera import CameraState
 from .deep_zoom import PixelGridExhaustedError
 from .deep_zoom_targets import DeepZoomTarget, favorite_deep_zoom_targets
 from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
@@ -13,12 +14,9 @@ from .renderers import available_renderers
 
 
 class FractalStudioApp(BaseFractalStudioApp):
-    """GUI variant that rejects numerically or visually exhausted flight frames."""
+    """GUI adapter that rejects numerically or visually exhausted flight frames."""
 
     def __init__(self, root: tk.Tk) -> None:
-        self.last_good_flight_view: tuple[str, str, str] | None = None
-        self.last_good_flight_rgb = None
-        self.pending_final_flight_quality_check = False
         self.deep_zoom_targets = favorite_deep_zoom_targets()
         self.deep_zoom_targets_by_name = {target.name: target for target in self.deep_zoom_targets}
         super().__init__(root)
@@ -73,19 +71,21 @@ class FractalStudioApp(BaseFractalStudioApp):
         self._update_deep_zoom_target_summary()
 
     def _apply_deep_zoom_target(self, target: DeepZoomTarget, *, load_view: bool) -> None:
-        if self.flight_running:
+        if self.flight_controller.running:
             self._stop_flight()
         self.fractal_var.set(target.fractal.value)
         self.iterations_var.set(target.recommended_iterations)
         self.reference_bits_var.set(target.reference_bits)
         self.palette_var.set(target.palette)
-        self.flight_target_text = (target.center_x_text, target.center_y_text)
+        self.flight_controller.set_target(target.center_x_text, target.center_y_text)
 
         action = "als Flugziel gesetzt"
         if load_view:
-            self.center_x_text = target.center_x_text
-            self.center_y_text = target.center_y_text
-            self.view_width_text = target.view_width_text
+            self.camera = CameraState(
+                target.center_x_text,
+                target.center_y_text,
+                target.view_width_text,
+            )
             action = "geladen und als Flugziel gesetzt"
             self.request_render()
 
@@ -105,38 +105,22 @@ class FractalStudioApp(BaseFractalStudioApp):
         if target is not None:
             self._apply_deep_zoom_target(target, load_view=True)
 
-    def toggle_flight(self) -> None:
-        starting = not self.flight_running and self.flight_target_text is not None
-        if starting:
-            self.pending_final_flight_quality_check = False
-            self.last_good_flight_view = (
-                self.center_x_text,
-                self.center_y_text,
-                self.view_width_text,
-            )
-            self.last_good_flight_rgb = self.last_rgb.copy() if self.last_rgb is not None else None
-        super().toggle_flight()
-
-    def _stop_flight(self, message: str | None = None) -> None:
-        # The base implementation submits the numerically clamped final frame
-        # before it clears flight_running. Keep that one candidate under the
-        # visual-quality gate even when an earlier render is still finishing.
-        if self.flight_running and message and "numerische Präzisionsgrenze" in message:
-            self.pending_final_flight_quality_check = True
-        super()._stop_flight(message)
-
     def _should_check_flight_result(self, generation: int) -> bool:
-        return self.flight_running or (
-            self.pending_final_flight_quality_check and generation == self.render_generation
+        return self.flight_controller.should_check_result(
+            generation,
+            self.render_controller.generation,
         )
 
     def _restore_last_good_flight_frame(
-        self, error: PixelGridExhaustedError | None = None, visual: FrameVisualQuality | None = None
+        self,
+        error: PixelGridExhaustedError | None = None,
+        visual: FrameVisualQuality | None = None,
     ) -> None:
-        if self.last_good_flight_view is not None:
-            self.center_x_text, self.center_y_text, self.view_width_text = self.last_good_flight_view
-        if self.last_good_flight_rgb is not None:
-            self.last_rgb = self.last_good_flight_rgb
+        camera, rgb = self.flight_controller.reject()
+        if camera is not None:
+            self.camera = camera
+        if rgb is not None:
+            self.last_rgb = rgb
 
         if error is not None:
             quality = error.quality
@@ -154,7 +138,6 @@ class FractalStudioApp(BaseFractalStudioApp):
         else:
             details = "Die Bildqualität ist unter die Fluggrenze gefallen."
 
-        self.pending_final_flight_quality_check = False
         self._stop_flight(
             "Flug automatisch gestoppt: Der nächste Frame ist nicht mehr sinnvoll aufgelöst.\n"
             + details
@@ -164,33 +147,24 @@ class FractalStudioApp(BaseFractalStudioApp):
         try:
             result = future.result()
         except PixelGridExhaustedError as error:
-            self.render_in_progress = False
+            render_invalidated = self.render_controller.complete(generation)
             if self._should_check_flight_result(generation):
                 self._restore_last_good_flight_frame(error)
-                self.render_generation += 1
                 self.request_render()
             else:
                 self.status_var.set(f"Rendergrenze erreicht: {error}")
+                if render_invalidated:
+                    self.request_render()
             return
 
-        check_flight_quality = self._should_check_flight_result(generation)
-        if check_flight_quality:
+        if self._should_check_flight_result(generation):
             visual = analyze_frame_visual_quality(result.rgb)
             if not visual.safe:
-                self.render_in_progress = False
+                self.render_controller.complete(generation)
                 self._restore_last_good_flight_frame(visual=visual)
-                self.render_generation += 1
                 self.request_render()
                 return
-
-            self.last_good_flight_view = (
-                request.center_x_text or repr(request.viewport.center_x),
-                request.center_y_text or repr(request.viewport.center_y),
-                request.view_width_text or repr(request.viewport.width),
-            )
-            self.last_good_flight_rgb = result.rgb.copy()
-            if self.pending_final_flight_quality_check and generation == self.render_generation:
-                self.pending_final_flight_quality_check = False
+            self.flight_controller.accept(CameraState.from_request(request), result.rgb)
 
         super()._finish_render(future, generation, request)
 

@@ -5,7 +5,9 @@ from types import SimpleNamespace
 import mpmath as mp
 import pytest
 
+from fractal_flight_studio.camera import CameraState
 from fractal_flight_studio.flight_app import FractalStudioApp
+from fractal_flight_studio.flight_controller import FlightController
 from fractal_flight_studio.deep_zoom_targets import (
     deep_zoom_target,
     favorite_deep_zoom_targets,
@@ -71,16 +73,15 @@ def test_catalog_rejects_duplicate_ids():
 
 def test_apply_catalog_target_keeps_text_precision_and_recommendations():
     target = deep_zoom_target("diamond-cross-junction")
+    controller = FlightController()
+    controller.running = True
     app = SimpleNamespace(
-        flight_running=True,
+        flight_controller=controller,
+        camera=CameraState(),
         fractal_var=_Var("julia"),
         iterations_var=_Var(20),
         reference_bits_var=_Var(128),
         palette_var=_Var("inferno"),
-        flight_target_text=None,
-        center_x_text="-0.5",
-        center_y_text="0.0",
-        view_width_text="3.5",
         position_var=_Var(""),
         render_count=0,
         stop_count=0,
@@ -95,14 +96,14 @@ def test_apply_catalog_target_keeps_text_precision_and_recommendations():
     assert app.iterations_var.get() == 1500
     assert app.reference_bits_var.get() == 384
     assert app.palette_var.get() == "electric"
-    assert app.flight_target_text == ("0.370624233423", "-0.670428331878")
-    assert (app.center_x_text, app.center_y_text, app.view_width_text) == ("-0.5", "0.0", "3.5")
+    assert controller.target_text == ("0.370624233423", "-0.670428331878")
+    assert app.camera == CameraState()
     assert app.render_count == 0
 
-    app.flight_running = False
+    controller.running = False
     FractalStudioApp._apply_deep_zoom_target(app, target, load_view=True)
 
-    assert (app.center_x_text, app.center_y_text, app.view_width_text) == (
+    assert app.camera == CameraState(
         target.center_x_text,
         target.center_y_text,
         target.view_width_text,
