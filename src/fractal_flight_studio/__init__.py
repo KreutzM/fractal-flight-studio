@@ -17,6 +17,7 @@ from .ffmpeg_mp4 import (
 from .flight_path import CameraPath, Easing, FlightKeyframe
 from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
 from .mp4_export import build_mp4_export_plan, export_path_to_mp4
+from .path_editor import CameraPathDraft
 from .offline_render import (
     OfflineFrame,
     OfflineFrameJob,
@@ -41,6 +42,7 @@ from .preflight import (
 
 __all__ = [
     "CameraPath",
+    "CameraPathDraft",
     "CameraState",
     "Easing",
     "FFmpegInfo",
