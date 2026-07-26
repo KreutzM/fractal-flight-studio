@@ -42,6 +42,13 @@ from .offline_render import (
     render_offline_frame,
     render_offline_frames,
 )
+from .temporal_tonemapping import (
+    TemporalToneSettings,
+    ToneAnalysisProgress,
+    ToneStability,
+    analyze_offline_tone_states,
+    stabilize_tone_states,
+)
 from .preflight import (
     PreflightCancelled,
     PreflightIssue,
@@ -90,8 +97,12 @@ __all__ = [
     "PreflightSettings",
     "RenderMode",
     "RenderRequest",
+    "TemporalToneSettings",
+    "ToneAnalysisProgress",
+    "ToneStability",
     "Viewport",
     "build_mp4_export_plan",
+    "analyze_offline_tone_states",
     "build_offline_frame_plan",
     "build_preflight_plan",
     "encode_mp4_frames",
@@ -103,5 +114,6 @@ __all__ = [
     "render_offline_frame",
     "render_offline_frames",
     "run_path_preflight",
+    "stabilize_tone_states",
 ]
 __version__ = "0.9.0"

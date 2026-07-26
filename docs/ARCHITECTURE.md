@@ -38,11 +38,13 @@ Responsibilities:
 
 ### `CameraPath` and `FlightKeyframe`
 
-`FlightKeyframe` stores an exact decimal timeline position, a `CameraState` and the easing curve for its outgoing segment. `CameraPath` validates an immutable sequence of at least two keyframes that starts at zero seconds and has strictly increasing times.
+`FlightKeyframe` stores an exact decimal timeline position, a `CameraState`, the easing curve and the center-interpolation mode for its outgoing segment. `CameraPath` validates an immutable sequence of at least two keyframes that starts at zero seconds and has strictly increasing times.
 
 Path evaluation is independent of Tk, rendering speed and wall-clock time:
 
 - X and Y are interpolated with the path's configured `mpmath` precision;
+- `linear` center interpolation follows a straight X/Y path for deliberate pans;
+- `focus` center interpolation ties center movement to the current zoom scale, keeping the next keyframe destination approximately fixed on screen during large zoom changes;
 - view width is interpolated in logarithmic space for visually uniform zoom speed;
 - `linear`, `smoothstep` and `smootherstep` easing are available per segment;
 - evaluation before or after the timeline returns the exact endpoint camera;
@@ -54,7 +56,7 @@ This component is the common camera source for a timeline editor, low-resolution
 
 `path_editor.py` provides the Tk-independent `CameraPathDraft`. A draft preserves exact decimal camera text and exact timeline positions while allowing temporary states that are not yet exportable, such as a single keyframe. Mutations return new draft values, automatically keep keyframes in timeline order and reject duplicate times. Only `build_path()` crosses the boundary into an immutable, fully validated `CameraPath`.
 
-`timeline_editor.py` is a non-modal Tk adapter over that model. It can capture the current camera, copy a packaged catalog target, edit time/easing/camera text, remove keyframes and preview either a selected keyframe or an interpolated timeline position. The window reports valid paths back to the application through a callback; it does not own rendering, preflight or export.
+`timeline_editor.py` is a non-modal Tk adapter over that model. It can capture the current camera, copy a packaged catalog target, edit time/easing/center-interpolation/camera text, remove keyframes and preview either a selected keyframe or an interpolated timeline position. New GUI segments default to `focus`; `linear` remains available for explicit X/Y camera moves. The window reports valid paths back to the application through a callback; it does not own rendering, preflight or export.
 
 ### Path preflight
 
@@ -83,7 +85,21 @@ This layer diagnoses a path before expensive offline rendering. It does not own 
 - `OfflineFrame` owns a copied 8-bit RGB array and compact scalar metadata. The iterator does not retain earlier frames.
 - Renderer failures are wrapped with the exact frame index and timeline time.
 
-This layer produces frames only. File publication and video process ownership remain separate responsibilities.
+This layer produces frames only. File publication and video process ownership remain separate responsibilities. Its default remains stateless for random-access and chunked callers; an export session may explicitly supply a planned per-frame `ToneMapState` sequence.
+
+### Temporal production tone mapping
+
+`temporal_tonemapping.py` owns the video-only analysis and stabilization policy. It does not retain full-resolution RGB frames.
+
+- a low-resolution analysis pass evaluates every exact cadence frame used by the MP4 plan;
+- each analysis frame produces an independent robust automatic `ToneMapState`;
+- frames without usable outside samples borrow neighboring states before smoothing;
+- a deterministic forward/backward exponential filter reduces parameter jumps without directional exposure lag;
+- the final full-resolution pass receives one locked state per frame and performs no new tone analysis;
+- CPU and CUDA renderers accept the same locked-state contract, and the CUDA final pass avoids the tone-sample readback;
+- cancellation and progress cover both analysis and final rendering.
+
+The planned states belong to one immutable export session. They are not stored in Tk widgets, FFmpeg, or a renderer's implicit interactive session, and they do not change the stateless random-access default of `offline_render.py`.
 
 ### Direct FFmpeg MP4 export
 
@@ -100,7 +116,7 @@ This layer produces frames only. File publication and video process ownership re
 - FFmpeg writes to a unique temporary file in the destination directory. The final `.mp4` path is replaced atomically only after a successful encoder exit.
 - Progress callbacks report completed frames and streamed bytes without moving state into Tk widgets.
 
-This layer does not own camera interpolation, preflight decisions, timeline editing or temporal tone-state policy. Hardware encoding, PNG checkpoint sequences and higher-bit-depth video remain later extensions.
+This layer does not own camera interpolation, preflight decisions or timeline editing. `mp4_export.py` may request a temporal tone plan before it hands the final RGB stream to the encoder; FFmpeg itself remains unaware of tone state. Hardware encoding, PNG checkpoint sequences and higher-bit-depth video remain later extensions.
 
 ### Preflight and export workflow
 
@@ -109,13 +125,13 @@ This layer does not own camera interpolation, preflight decisions, timeline edit
 - the dialog captures an immutable render request and exact `CameraPath` before each job;
 - interactive preview submissions are paused while the export worker owns the shared renderer;
 - preflight reports progress per completed sample and can be cancelled between samples;
-- MP4 progress is forwarded from the raw-RGB encoder without updating Tk from a worker thread;
+- stabilized MP4 jobs expose one combined progress range for low-resolution tone analysis and final rendering/encoding without updating Tk from a worker thread;
 - a successful preflight is fingerprinted against the exact path, renderer and render settings; changing relevant settings requires another preflight before export;
 - constant-rate frame plans use `append_endpoint=False` and show the planned frame count before work starts;
-- FFmpeg discovery, output selection, overwrite policy, codec preset and CRF are explicit user choices;
+- FFmpeg discovery, output selection, overwrite policy, codec preset, CRF and per-frame versus temporally stabilized tone mapping are explicit user choices;
 - closing the application requests cancellation and shuts down the workflow worker without blocking Tk.
 
-The controller does not own widgets and the dialog does not render frames itself. Project persistence, temporal production tone state and hardware encoders remain separate extensions.
+The controller does not own widgets and the dialog does not render frames itself. Project persistence and hardware encoders remain separate extensions.
 
 ### `RenderController`
 
@@ -156,7 +172,7 @@ Future PRs should follow these boundaries:
 - preflight evaluates a path through `run_path_preflight` and reports diagnostics without retaining frame images;
 - full-resolution work is planned with `build_offline_frame_plan`, evaluated with `iter_offline_frame_jobs` and rendered through the stateless offline-frame API;
 - constant-rate MP4 export uses `build_mp4_export_plan` and `export_path_to_mp4`, consumes completed RGB frames and does not own camera interpolation;
-- temporal tone state belongs to a render session, not to widgets or FFmpeg;
+- temporal tone analysis and zero-phase smoothing belong to `temporal_tonemapping.py`; locked states belong to one export session, not to widgets, FFmpeg or implicit renderer state;
 - persistent projects serialize camera/keyframe text without reducing it to absolute `float` values.
 
 ## Testing strategy
@@ -165,7 +181,8 @@ Future PRs should follow these boundaries:
 - preflight workload planning and diagnostics use deterministic fake renderers;
 - offline frame cadence, random-access jobs, RGB ownership and contextual failures use deterministic fake renderers;
 - FFmpeg command construction, process cleanup, error propagation, atomic publication and cancellation use deterministic fake processes;
-- export workflow configuration, fingerprints, progress and cooperative preflight cancellation are tested without Tk;
+- export workflow configuration, fingerprints, two-phase progress and cooperative cancellation are tested without Tk;
+- temporal tone planning is tested for determinism, missing-state handling, locked CPU/CUDA application and reduced adjacent parameter jumps;
 - renderer precision and CPU/CUDA parity remain covered by numerical tests;
 - the Xvfb smoke test verifies only the assembled GUI wiring;
 - physical CUDA performance, native FFmpeg encoder availability and Windows packaging remain separate target-system checks.

@@ -213,6 +213,48 @@ def resolve_tone_state(
     }
 
 
+
+def resolve_locked_tone_state(
+    mode: str,
+    state: ToneMapState | None,
+    scene_key: tuple[Any, ...] | None = None,
+) -> tuple[ToneMapState | None, dict[str, Any]]:
+    """Return an already planned tone state without re-analyzing the frame."""
+
+    if mode not in tone_mapping_names():
+        raise ValueError(f"unknown tone mapping mode: {mode}")
+    if mode == "linear":
+        if state is not None:
+            raise ValueError("linear tone mapping does not accept a locked tone state")
+        return None, {
+            "tone_mapping": "linear",
+            "tone_low": 0.0,
+            "tone_high": 1.0,
+            "tone_strength": 1.0,
+            "tone_gamma": 1.0,
+            "tone_scene_reset": False,
+            "tone_sample_count": 0,
+            "tone_state_locked": True,
+        }
+    if state is None:
+        raise ValueError("locked automatic tone mapping requires a tone state")
+    if state.mode != mode:
+        raise ValueError(
+            f"locked tone state mode {state.mode!r} does not match requested mode {mode!r}"
+        )
+    if scene_key is not None and state.scene_key != scene_key:
+        raise ValueError("locked tone state does not match the requested scene")
+    return state, {
+        "tone_mapping": mode,
+        "tone_low": state.low,
+        "tone_high": state.high,
+        "tone_strength": state.strength,
+        "tone_gamma": state.gamma,
+        "tone_scene_reset": False,
+        "tone_sample_count": 0,
+        "tone_state_locked": True,
+    }
+
 def apply_curve(values: np.ndarray, state: ToneMapState | None) -> np.ndarray:
     if state is None:
         return np.clip(values, 0.0, 1.0).astype(np.float32, copy=False)
@@ -234,7 +276,12 @@ def apply_tone_mapping(
     state: ToneMapState | None = None,
     scene_key: tuple[Any, ...] | None = None,
     smoothing: float = _DEFAULT_SMOOTHING,
+    locked: bool = False,
 ) -> tuple[np.ndarray, ToneMapState | None, dict[str, Any]]:
-    samples = stratified_samples(values, inside)
-    next_state, details = resolve_tone_state(samples, mode, state, scene_key, smoothing)
+    if locked:
+        next_state, details = resolve_locked_tone_state(mode, state, scene_key)
+    else:
+        samples = stratified_samples(values, inside)
+        next_state, details = resolve_tone_state(samples, mode, state, scene_key, smoothing)
+        details["tone_state_locked"] = False
     return apply_curve(values, next_state), next_state, details

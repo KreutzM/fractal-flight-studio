@@ -23,6 +23,7 @@ from .offline_render import (
     OfflineRenderSettings,
     build_offline_frame_plan,
 )
+from .temporal_tonemapping import TemporalToneSettings, ToneStability
 from .preflight import (
     PreflightReport,
     PreflightSettings,
@@ -66,9 +67,12 @@ class FlightExportConfiguration:
     crf: int = 18
     output_pixel_format: str = "yuv420p"
     overwrite: bool = False
+    tone_stability: ToneStability | str = ToneStability.TEMPORAL
+    tone_smoothing: float = 0.18
     max_frames: int = 1_000_000
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "tone_stability", ToneStability(self.tone_stability))
         numerator, denominator = parse_frame_rate(self.frame_rate_text)
         OfflineRenderSettings(
             width=self.width,
@@ -92,6 +96,7 @@ class FlightExportConfiguration:
             output_pixel_format=self.output_pixel_format,
             overwrite=self.overwrite,
         )
+        self.temporal_tone_settings()
         if self.output_pixel_format in {"yuv420p", "yuv420p10le"} and (
             self.width % 2 or self.height % 2
         ):
@@ -133,6 +138,15 @@ class FlightExportConfiguration:
             overwrite=self.overwrite,
         )
 
+
+    def temporal_tone_settings(self) -> TemporalToneSettings:
+        return TemporalToneSettings(
+            mode=self.tone_stability,
+            analysis_width=self.preflight_width,
+            analysis_height=self.preflight_height,
+            smoothing=self.tone_smoothing,
+        )
+
     def build_offline_plan(self, path: CameraPath) -> OfflineFramePlan:
         return build_offline_frame_plan(path, self.offline_settings())
 
@@ -150,6 +164,8 @@ class FlightExportConfiguration:
             self.preflight_height,
             self.preflight_interval_text,
             self.preflight_max_samples,
+            self.tone_stability.value,
+            self.tone_smoothing,
         )
 
 
@@ -303,15 +319,31 @@ class FlightExportController:
         palette: str,
         cycles: float,
         tone_mapping: str = "auto",
+        temporal_tone: TemporalToneSettings = TemporalToneSettings(
+            mode=ToneStability.PER_FRAME
+        ),
     ) -> Future[Mp4ExportResult]:
-        total = build_mp4_export_plan(offline_plan).frame_count
+        frame_total = build_mp4_export_plan(offline_plan).frame_count
+        analysis_enabled = (
+            temporal_tone.mode is ToneStability.TEMPORAL and tone_mapping != "linear"
+        )
+        total = frame_total * (2 if analysis_enabled else 1)
 
-        def update(progress) -> None:
+        def update_analysis(progress) -> None:
             self._set_progress(
                 FlightExportJobKind.MP4,
-                progress.frames_written,
-                progress.total_frames,
-                f"Kodiere Frame {progress.frames_written}/{progress.total_frames}",
+                progress.frames_analyzed,
+                total,
+                f"Analysiere Tone Mapping {progress.frames_analyzed}/{progress.total_frames}",
+            )
+
+        def update_encode(progress) -> None:
+            offset = frame_total if analysis_enabled else 0
+            self._set_progress(
+                FlightExportJobKind.MP4,
+                offset + progress.frames_written,
+                total,
+                f"Rendere und kodiere Frame {progress.frames_written}/{progress.total_frames}",
             )
 
         def job() -> Mp4ExportResult:
@@ -325,14 +357,21 @@ class FlightExportController:
                 palette=palette,
                 cycles=cycles,
                 tone_mapping=tone_mapping,
-                progress=update,
+                temporal_tone=temporal_tone,
+                tone_analysis_progress=update_analysis,
+                progress=update_encode,
                 cancellation_requested=self._cancel.is_set,
             )
 
+        message = (
+            f"Analysiere Tone Mapping für {frame_total} Frames …"
+            if analysis_enabled
+            else f"Rendere und kodiere {frame_total} Frames …"
+        )
         return self._submit(
             FlightExportJobKind.MP4,
             total=total,
-            message=f"Rendere und kodiere {total} Frames …",
+            message=message,
             job=job,
         )
 

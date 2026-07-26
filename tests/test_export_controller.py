@@ -229,3 +229,80 @@ def test_controller_cancel_stops_preflight_between_samples():
 
     assert progress is not None
     assert progress.message == "Abbruch angefordert …"
+
+
+def test_temporal_export_progress_covers_analysis_and_encoding(monkeypatch, tmp_path):
+    output = tmp_path / "temporal.mp4"
+
+    def fake_export(path, request, renderer, offline_plan, output_path, settings, **kwargs):
+        total = workflow.build_mp4_export_plan(offline_plan).frame_count
+        for index in range(total):
+            kwargs["tone_analysis_progress"](
+                type(
+                    "AnalysisProgress",
+                    (),
+                    {
+                        "frames_analyzed": index + 1,
+                        "total_frames": total,
+                        "time_seconds_text": str(index),
+                    },
+                )()
+            )
+        for index in range(total):
+            kwargs["progress"](
+                type(
+                    "Progress",
+                    (),
+                    {"frames_written": index + 1, "total_frames": total},
+                )()
+            )
+        return Mp4ExportResult(
+            Path(output_path),
+            total,
+            0,
+            0.0,
+            FFmpegInfo("ffmpeg", "ffmpeg version fake"),
+            ("ffmpeg",),
+        )
+
+    monkeypatch.setattr(workflow, "export_path_to_mp4", fake_export)
+    config = workflow.FlightExportConfiguration(width=64, height=36, frame_rate_text="2")
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        controller = workflow.FlightExportController(executor)
+        future = controller.start_mp4(
+            _path(),
+            RenderRequest(),
+            _Renderer(),
+            config.build_offline_plan(_path()),
+            output,
+            config.mp4_settings(),
+            palette="inferno",
+            cycles=1.0,
+            temporal_tone=config.temporal_tone_settings(),
+        )
+        future.result(timeout=5)
+        progress = controller.progress
+        controller.complete(future)
+
+    assert progress is not None
+    assert progress.completed == progress.total == 4
+    assert progress.message == "Rendere und kodiere Frame 2/2"
+
+
+def test_tone_stability_is_validated_and_part_of_preflight_fingerprint():
+    temporal = workflow.FlightExportConfiguration(width=64, height=36)
+    per_frame = workflow.FlightExportConfiguration(
+        width=64,
+        height=36,
+        tone_stability="per_frame",
+    )
+
+    assert temporal.tone_stability.value == "temporal"
+    assert temporal.preflight_fingerprint() != per_frame.preflight_fingerprint()
+    with pytest.raises(ValueError, match="ToneStability"):
+        workflow.FlightExportConfiguration(
+            width=64,
+            height=36,
+            tone_stability="unknown",
+        )
