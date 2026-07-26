@@ -129,7 +129,17 @@ second = renderer.render_frame(
     request, tone_mapping="auto", tone_state=first.details["tone_state"],
     tone_scene_key=key, tone_smoothing=0.08,
 )
+locked_state = first.details["tone_state"]
+cpu_locked = CpuRenderer().render_frame(
+    request, tone_mapping="auto", tone_state=locked_state,
+    tone_scene_key=key, tone_state_locked=True,
+)
+cuda_locked = renderer.render_frame(
+    request, tone_mapping="auto", tone_state=locked_state,
+    tone_scene_key=key, tone_state_locked=True,
+)
 assert np.array_equal(first.rgb, cpu.rgb)
+assert np.array_equal(cuda_locked.rgb, cpu_locked.rgb)
 assert first.details["optimized_frame_path"] is True
 assert first.details["tone_mapping"] == "auto"
 assert first.details["tone_sample_count"] > 0
@@ -137,6 +147,10 @@ assert first.details["transfer"] == "stratified tone sample + single RGB readbac
 assert second.details["tone_scene_reset"] is False
 assert second.details["allocation_seconds"] == 0.0
 assert second.details["palette_upload_seconds"] == 0.0
+assert cpu_locked.details["tone_state_locked"] is True
+assert cuda_locked.details["tone_state_locked"] is True
+assert cuda_locked.details["tone_sample_count"] == 0
+assert cuda_locked.details["transfer"] == "single RGB readback"
 print("optimized CUDA auto tone path passed")
 '''
     completed = subprocess.run([sys.executable, "-c", code], env=env, check=True, text=True, capture_output=True)

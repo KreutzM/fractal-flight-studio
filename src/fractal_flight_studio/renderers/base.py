@@ -50,6 +50,7 @@ class Renderer(ABC):
         tone_state=None,
         tone_scene_key=None,
         tone_smoothing: float = 0.16,
+        tone_state_locked: bool = False,
     ) -> FrameResult:
         """Render a display-ready RGB frame.
 
@@ -62,7 +63,9 @@ class Renderer(ABC):
         if tone_mapping == "auto" and request.fractal.value == "newton":
             effective_tone_mapping = "linear"
 
-        implicit_state = tone_state is None and tone_scene_key is None
+        implicit_state = (
+            not tone_state_locked and tone_state is None and tone_scene_key is None
+        )
         if implicit_state:
             tone_scene_key = (
                 request.fractal.value,
@@ -91,6 +94,7 @@ class Renderer(ABC):
             tone_state,
             tone_scene_key,
             tone_smoothing,
+            tone_state_locked,
         )
         color_seconds = time.perf_counter() - color_started
         if implicit_state:

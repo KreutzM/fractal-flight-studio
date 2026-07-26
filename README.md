@@ -154,6 +154,13 @@ Die GUI verwendet `auto` ohne zusätzliche Konfiguration. Über die CLI und die
 Python-API stehen außerdem `linear` für die unveränderte Rohdarstellung und
 `asinh` für robuste Fensterung ohne automatische Gamma-Korrektur bereit.
 
+Für MP4-Exporte ergänzt die GUI eine zweite Ebene: **Zeitlich stabilisiert** analysiert
+die automatische Tonkurve zunächst in kleiner Auflösung über die gesamte exakte
+Videokadenz. Ein deterministischer Vorwärts-/Rückwärts-Filter reduziert Sprünge,
+ohne dass die Belichtung einem Szenenwechsel nur verzögert hinterherläuft. Der
+finale Render verwendet die geplanten Parameter unverändert; dadurch bleiben
+Helligkeit, Kontrast und Farbverteilung zwischen benachbarten Frames ruhiger.
+
 ## Bedienung
 
 - Mausrad: hinein- und herauszoomen
@@ -161,19 +168,19 @@ Python-API stehen außerdem `linear` für die unveränderte Rohdarstellung und
 - rechte Maustaste: Flugziel setzen
 - „Flug starten“: kontinuierlich zum Ziel zoomen; stoppt automatisch an der numerischen Präzisionsgrenze
 - „PNG exportieren“: Bild in aktueller Fensterauflösung speichern
-- „Flugplan …“: aktuelle Ansichten und Katalogziele als exakte X/Y/Zoom-Keyframes anlegen und Zwischenpositionen prüfen
+- „Flugplan …“: aktuelle Ansichten und Katalogziele als exakte X/Y/Zoom-Keyframes anlegen, pro Segment `focus` oder `linear` wählen und Zwischenpositionen prüfen
 - „Video exportieren …“: Auflösung und Framerate planen, FFmpeg prüfen, einen Low-Resolution-Preflight ausführen und anschließend direkt als MP4 rendern
 
 Für normale Vorschau und Flug kann die Render-Skalierung getrennt auf 50 %, 75 % oder 100 % gesetzt werden. Auf CUDA-Systemen ist 100 % voreingestellt; auf CPU-Systemen 75 %. Die Statuszeile trennt Rechnen/Transfer von der Tk-Anzeige.
 
 ### MP4-Workflow
 
-1. Im **Flugplan** mindestens zwei Keyframes anlegen; der erste muss bei 0 Sekunden liegen.
-2. Im Dialog **Video exportieren** Auflösung, konstante Framerate, Codec, CRF und Zieldatei wählen.
+1. Im **Flugplan** mindestens zwei Keyframes anlegen; der erste muss bei 0 Sekunden liegen. Für starke Zooms ist der voreingestellte Mittelpunktmodus **`focus`** gedacht: Er richtet die Kamera früh auf das nächste Ziel aus und verhindert, dass in Zwischenpunkte hineingezoomt wird. **`linear`** eignet sich für bewusst geradlinige X/Y-Fahrten.
+2. Im Dialog **Video exportieren** Auflösung, konstante Framerate, Codec, CRF, Zieldatei und den Tone-Mapping-Modus wählen. **Zeitlich stabilisiert** ist für Videos voreingestellt; **Automatisch pro Frame** erhält das frühere Verhalten für Vergleiche.
 3. FFmpeg prüfen und den Preflight starten. Der Preflight rendert kleine Stichproben entlang des exakten Pfads und meldet numerische, visuelle oder Backend-Fehler.
-4. Nach einem erfolgreichen Preflight den MP4-Export starten. RGB-Frames werden direkt an FFmpeg gestreamt; eine PNG-Zwischensequenz ist nicht erforderlich.
+4. Nach einem erfolgreichen Preflight den MP4-Export starten. Im stabilisierten Modus analysiert ein kleiner Vorlauf zuerst jeden exakten Videozeitpunkt, glättet die ermittelten Tonkurven vorwärts und rückwärts und verwendet diese Parameter anschließend fest für den Full-Resolution-Render. Danach werden die RGB-Frames direkt an FFmpeg gestreamt; eine PNG-Zwischensequenz ist nicht erforderlich.
 
-Preflight und Export laufen außerhalb des Tk-Hauptthreads. Fortschritt und Abbruch bleiben deshalb auch bei langsamen Deep-Zoom-Frames bedienbar. Ändern sich Pfad oder relevante Rendereinstellungen, muss der Preflight vor dem Export erneut ausgeführt werden.
+Preflight, Tone-Mapping-Analyse und Export laufen außerhalb des Tk-Hauptthreads. Der Fortschritt unterscheidet Analyse und finalen Render; ein Abbruch wirkt in beiden Phasen. Änderungen an Pfad, Tone-Mapping-Modus oder relevanten Rendereinstellungen verlangen einen neuen Preflight. Die zeitliche Glättung ist deterministisch und verwendet keinen Zustand aus der interaktiven Vorschau.
 
 ## CLI
 

@@ -1,15 +1,72 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
-from tkinter import messagebox
+import tkinter as tk
+from tkinter import messagebox, ttk
 
 from .export_controller import FlightExportJobKind
 from .export_dialog import FlightExportDialog as BaseFlightExportDialog
 from .preflight import PreflightIssueKind, PreflightReport
+from .temporal_tonemapping import ToneStability
+
+
+_TONE_STABILITY_LABELS = {
+    "Zeitlich stabilisiert": ToneStability.TEMPORAL,
+    "Automatisch pro Frame": ToneStability.PER_FRAME,
+}
 
 
 class FlightExportDialog(BaseFlightExportDialog):
-    """Export dialog that treats visual heuristics as confirmable warnings."""
+    """Export dialog with visual-warning confirmation and video tone policy."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.tone_stability_var = tk.StringVar(value="Zeitlich stabilisiert")
+        self._install_tone_stability_controls()
+        self.tone_stability_var.trace_add(
+            "write", lambda *_args: self.refresh_path_summary()
+        )
+        self.refresh_path_summary()
+
+    def _install_tone_stability_controls(self) -> None:
+        outer = self.winfo_children()[0]
+        settings = next(
+            child for child in outer.winfo_children() if isinstance(child, ttk.Panedwindow)
+        )
+        video = settings.winfo_children()[0]
+        overwrite = next(
+            child for child in video.winfo_children() if isinstance(child, ttk.Checkbutton)
+        )
+        overwrite.grid_configure(row=7)
+        ttk.Label(video, text="Tone Mapping").grid(
+            row=6, column=0, sticky="w", pady=(6, 0)
+        )
+        ttk.Combobox(
+            video,
+            textvariable=self.tone_stability_var,
+            values=tuple(_TONE_STABILITY_LABELS),
+            state="readonly",
+        ).grid(row=6, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+
+    def _configuration(self):
+        config = super()._configuration()
+        variable = getattr(self, "tone_stability_var", None)
+        mode = (
+            _TONE_STABILITY_LABELS[variable.get()]
+            if variable is not None
+            else ToneStability.TEMPORAL
+        )
+        return replace(config, tone_stability=mode)
+
+    def refresh_path_summary(self) -> None:
+        super().refresh_path_summary()
+        variable = getattr(self, "tone_stability_var", None)
+        summary = self.plan_summary_var.get()
+        if variable is not None and summary and not summary.startswith("Ungültige"):
+            self.plan_summary_var.set(
+                f"{summary.rstrip('.')}; Tone Mapping: {variable.get()}."
+            )
 
     def _start_export(self) -> None:
         if not self._ensure_startable():
@@ -53,6 +110,7 @@ class FlightExportDialog(BaseFlightExportDialog):
                 config.mp4_settings(),
                 palette=palette,
                 cycles=cycles,
+                temporal_tone=config.temporal_tone_settings(),
             )
         except Exception as exc:
             self._show_error("MP4-Export", exc)

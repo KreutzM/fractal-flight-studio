@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
-from typing import Any, Iterator, Protocol, TypeAlias
+from typing import Any, Iterator, Protocol, Sequence, TypeAlias
 
 import mpmath as mp
 import numpy as np
@@ -11,6 +11,7 @@ import numpy as np
 from .camera import CameraState
 from .flight_path import CameraPath
 from .models import RenderRequest
+from .tonemapping import ToneMapState
 
 ScalarDetail: TypeAlias = bool | float | int | str | None
 
@@ -161,8 +162,11 @@ def render_offline_frame(
     cycles: float = 1.0,
     phase: float = 0.0,
     tone_mapping: str = "auto",
+    tone_state: ToneMapState | None = None,
+    tone_scene_key: tuple[object, ...] | None = None,
+    tone_state_locked: bool = False,
 ) -> OfflineFrame:
-    scene_key = (
+    scene_key = tone_scene_key or (
         "offline-frame",
         job.request.fractal.value,
         job.request.precision.value,
@@ -181,9 +185,10 @@ def render_offline_frame(
             cycles,
             phase,
             tone_mapping=tone_mapping,
-            tone_state=None,
+            tone_state=tone_state,
             tone_scene_key=scene_key,
             tone_smoothing=1.0,
+            tone_state_locked=tone_state_locked,
         )
         rgb = np.asarray(frame.rgb)
         expected_shape = (job.request.height, job.request.width, 3)
@@ -218,14 +223,21 @@ def render_offline_frames(
     cycles: float = 1.0,
     phase: float = 0.0,
     tone_mapping: str = "auto",
+    tone_states: Sequence[ToneMapState | None] | None = None,
+    tone_scene_key: tuple[object, ...] | None = None,
+    tone_state_locked: bool = False,
 ) -> Iterator[OfflineFrame]:
+    stop = plan.frame_count if stop_index is None else stop_index
+    if tone_states is not None and len(tone_states) < stop:
+        raise ValueError("tone-state plan is shorter than the requested frame range")
     for job in iter_offline_frame_jobs(
         path,
         request_template,
         plan,
         start_index=start_index,
-        stop_index=stop_index,
+        stop_index=stop,
     ):
+        tone_state = None if tone_states is None else tone_states[job.index]
         yield render_offline_frame(
             job,
             renderer,
@@ -233,6 +245,9 @@ def render_offline_frames(
             cycles=cycles,
             phase=phase,
             tone_mapping=tone_mapping,
+            tone_state=tone_state,
+            tone_scene_key=tone_scene_key,
+            tone_state_locked=tone_state_locked,
         )
 
 

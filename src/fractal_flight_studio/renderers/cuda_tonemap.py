@@ -7,7 +7,7 @@ import numpy as np
 from numba import cuda, float32
 
 from ..models import FractalKind, RenderRequest
-from ..tonemapping import resolve_tone_state, sample_grid
+from ..tonemapping import resolve_locked_tone_state, resolve_tone_state, sample_grid
 from .base import FrameResult
 from .cuda import CudaRenderer as _BaseCudaRenderer
 
@@ -142,6 +142,7 @@ class CudaRenderer(_BaseCudaRenderer):
         tone_state=None,
         tone_scene_key=None,
         tone_smoothing: float = 0.16,
+        tone_state_locked: bool = False,
     ) -> FrameResult:
         request.validate()
         if cycles <= 0:
@@ -152,14 +153,17 @@ class CudaRenderer(_BaseCudaRenderer):
             raise RuntimeError("CUDA is not available")
 
         effective_mode = "linear" if tone_mapping == "auto" and request.fractal is FractalKind.NEWTON else tone_mapping
-        implicit_state = tone_state is None and tone_scene_key is None
+        implicit_state = (
+            not tone_state_locked and tone_state is None and tone_scene_key is None
+        )
         if implicit_state:
             tone_scene_key = self._default_scene_key(request, effective_mode)
             if tone_scene_key == self._automatic_tone_scene_key:
                 tone_state = self._automatic_tone_state
 
         allocation_seconds = self._ensure_buffers(request.height, request.width)
-        self._ensure_tone_buffers()
+        if not tone_state_locked and effective_mode != "linear":
+            self._ensure_tone_buffers()
         palette_seconds = self._ensure_palette(palette)
         threads = (16, 16)
         blocks = (
@@ -174,7 +178,11 @@ class CudaRenderer(_BaseCudaRenderer):
         orbit_upload_seconds = self._launch_fractal(request, blocks, threads, perturb)
         tone_analysis_started = time.perf_counter()
 
-        if effective_mode == "linear":
+        if tone_state_locked:
+            next_state, tone_details = resolve_locked_tone_state(
+                effective_mode, tone_state, tone_scene_key
+            )
+        elif effective_mode == "linear":
             next_state = None
             tone_details = {
                 "tone_mapping": "linear",
@@ -184,6 +192,7 @@ class CudaRenderer(_BaseCudaRenderer):
                 "tone_gamma": 1.0,
                 "tone_scene_reset": tone_state is not None,
                 "tone_sample_count": 0,
+                "tone_state_locked": False,
             }
         else:
             grid_x, grid_y = sample_grid(request.width, request.height, 4096)
@@ -210,6 +219,7 @@ class CudaRenderer(_BaseCudaRenderer):
                 tone_scene_key,
                 tone_smoothing,
             )
+            tone_details["tone_state_locked"] = False
 
         if implicit_state:
             self._automatic_tone_state = next_state
@@ -249,7 +259,11 @@ class CudaRenderer(_BaseCudaRenderer):
             "palette_upload_seconds": palette_seconds,
             "persistent_buffers": True,
             "optimized_frame_path": True,
-            "transfer": "stratified tone sample + single RGB readback" if effective_mode != "linear" else "single RGB readback",
+            "transfer": (
+                "stratified tone sample + single RGB readback"
+                if effective_mode != "linear" and not tone_state_locked
+                else "single RGB readback"
+            ),
             "render_mode": "perturbation" if perturb is not None else "direct",
             "reference_bits": perturb.reference_bits if perturb is not None else 0,
             "reference_rebase_limit": perturb.reference_rebase_limit if perturb is not None else 0,

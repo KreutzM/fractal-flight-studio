@@ -65,6 +65,8 @@ def main() -> int:
     root.update_idletasks()
     assert "2 Keyframes" in export_dialog.path_summary_var.get()
     assert "60 Frames" in export_dialog.plan_summary_var.get()
+    assert export_dialog.tone_stability_var.get() == "Zeitlich stabilisiert"
+    assert "Tone Mapping: Zeitlich stabilisiert" in export_dialog.plan_summary_var.get()
     export_dialog.destroy()
     root.update_idletasks()
 

@@ -96,6 +96,7 @@ def tone_mapped_colorize(
     tone_state: ToneMapState | None = None,
     scene_key: tuple[Any, ...] | None = None,
     tone_smoothing: float = 0.16,
+    tone_state_locked: bool = False,
 ) -> tuple[np.ndarray, ToneMapState | None, dict[str, Any]]:
     mapped, next_state, details = apply_tone_mapping(
         values,
@@ -104,6 +105,7 @@ def tone_mapped_colorize(
         tone_state,
         scene_key,
         tone_smoothing,
+        tone_state_locked,
     )
     rgb = colorize(mapped, inside, palette, cycles, phase)
     return rgb, next_state, details
