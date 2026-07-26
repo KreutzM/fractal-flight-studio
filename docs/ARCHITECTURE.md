@@ -7,6 +7,7 @@ Fractal Flight Studio separates numerical rendering, application state and Tk pr
 ```text
 Tk GUI (`app.py`, `app_ui.py`, `flight_app.py`)
     ├── CameraState
+    ├── CameraPath / FlightKeyframe
     ├── RenderController
     ├── FlightController
     ├── target catalog
@@ -29,6 +30,20 @@ Responsibilities:
 - produce a bounded float proxy for direct render paths;
 - construct camera snapshots from completed render requests;
 - define fractal-specific reset views.
+
+### `CameraPath` and `FlightKeyframe`
+
+`FlightKeyframe` stores an exact decimal timeline position, a `CameraState` and the easing curve for its outgoing segment. `CameraPath` validates an immutable sequence of at least two keyframes that starts at zero seconds and has strictly increasing times.
+
+Path evaluation is independent of Tk, rendering speed and wall-clock time:
+
+- X and Y are interpolated with the path's configured `mpmath` precision;
+- view width is interpolated in logarithmic space for visually uniform zoom speed;
+- `linear`, `smoothstep` and `smootherstep` easing are available per segment;
+- evaluation before or after the timeline returns the exact endpoint camera;
+- camera text is never reduced to absolute FP64 values.
+
+This component is the common camera source for a later timeline editor, low-resolution preflight and deterministic offline frame renderer.
 
 ### `RenderController`
 
@@ -65,15 +80,15 @@ Renderer modules remain responsible for numerical values, perturbation, CUDA exe
 Future PRs should follow these boundaries:
 
 - target previews and search belong to separate UI components backed by the existing catalog;
-- X/Y/zoom keyframes produce `CameraState` values and do not manipulate Tk variables directly;
-- offline frame jobs call renderers through a non-Tk orchestration layer;
+- timeline editors build `FlightKeyframe` and `CameraPath` values and do not manipulate Tk variables directly;
+- offline frame jobs evaluate `CameraPath` by deterministic frame time and call renderers through a non-Tk orchestration layer;
 - video encoding consumes completed RGB or higher-bit-depth frames and does not own camera interpolation;
 - temporal tone state belongs to a render session, not to widgets;
 - persistent projects serialize camera/keyframe text without reducing it to absolute `float` values.
 
 ## Testing strategy
 
-- camera and controller behavior is tested without Tk;
+- camera, path and controller behavior is tested without Tk;
 - renderer precision and CPU/CUDA parity remain covered by numerical tests;
 - the Xvfb smoke test verifies only the assembled GUI wiring;
 - physical CUDA performance and Windows packaging remain separate target-system checks.
