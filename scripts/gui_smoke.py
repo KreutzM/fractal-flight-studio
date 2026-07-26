@@ -17,6 +17,24 @@ def main() -> int:
         app.deep_zoom_targets[0].center_x_text,
         app.deep_zoom_targets[0].center_y_text,
     )
+    app.open_target_browser()
+    browser = app.target_browser
+    assert browser is not None
+    root.update_idletasks()
+    assert len(browser._visible_targets) == 10
+    browser.search_var.set("spiral")
+    root.update_idletasks()
+    assert browser._visible_targets
+    assert all(
+        "spiral" in " ".join((target.name, target.description, *target.tags)).casefold()
+        for target in browser._visible_targets
+    )
+    selected = browser.selected_target
+    assert selected is not None
+    browser._set_selected_target()
+    assert app.flight_controller.target_text == (selected.center_x_text, selected.center_y_text)
+    assert app.deep_zoom_target_var.get() == selected.name
+    browser.destroy()
     root.update_idletasks()
     app.preview_scale_var.set(0.15)
     root.after(250, app.request_render)

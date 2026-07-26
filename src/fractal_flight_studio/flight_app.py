@@ -7,9 +7,10 @@ from tkinter import ttk
 from .app import FractalStudioApp as BaseFractalStudioApp
 from .camera import CameraState
 from .deep_zoom import PixelGridExhaustedError
-from .deep_zoom_targets import DeepZoomTarget, favorite_deep_zoom_targets
+from .deep_zoom_targets import DeepZoomTarget, favorite_deep_zoom_targets, load_deep_zoom_targets
 from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
 from .models import RenderRequest
+from .target_browser import DeepZoomTargetBrowser
 from .renderers import available_renderers
 
 
@@ -18,6 +19,8 @@ class FractalStudioApp(BaseFractalStudioApp):
 
     def __init__(self, root: tk.Tk) -> None:
         self.deep_zoom_targets = favorite_deep_zoom_targets()
+        self.all_deep_zoom_targets = load_deep_zoom_targets()
+        self.target_browser: DeepZoomTargetBrowser | None = None
         self.deep_zoom_targets_by_name = {target.name: target for target in self.deep_zoom_targets}
         super().__init__(root)
         self._build_deep_zoom_target_bar()
@@ -48,6 +51,9 @@ class FractalStudioApp(BaseFractalStudioApp):
         )
         ttk.Button(bar, text="Ansicht laden", command=self.load_catalog_target_view).pack(
             side=tk.LEFT
+        )
+        ttk.Button(bar, text="Ziele durchsuchen …", command=self.open_target_browser).pack(
+            side=tk.LEFT, padx=(6, 0)
         )
         self.deep_zoom_target_summary_var = tk.StringVar(value="")
         ttk.Label(bar, textvariable=self.deep_zoom_target_summary_var, foreground="#555").pack(
@@ -104,6 +110,25 @@ class FractalStudioApp(BaseFractalStudioApp):
         target = self._selected_deep_zoom_target()
         if target is not None:
             self._apply_deep_zoom_target(target, load_view=True)
+
+    def _apply_browser_target(self, target: DeepZoomTarget, *, load_view: bool) -> None:
+        if target.name in self.deep_zoom_targets_by_name:
+            self.deep_zoom_target_var.set(target.name)
+            self._update_deep_zoom_target_summary()
+        self._apply_deep_zoom_target(target, load_view=load_view)
+
+    def open_target_browser(self) -> None:
+        if self.target_browser is not None and self.target_browser.winfo_exists():
+            self.target_browser.deiconify()
+            self.target_browser.lift()
+            self.target_browser.focus_set()
+            return
+        self.target_browser = DeepZoomTargetBrowser(
+            self.root,
+            self.all_deep_zoom_targets,
+            on_set_target=lambda target: self._apply_browser_target(target, load_view=False),
+            on_load_view=lambda target: self._apply_browser_target(target, load_view=True),
+        )
 
     def _should_check_flight_result(self, generation: int) -> bool:
         return self.flight_controller.should_check_result(

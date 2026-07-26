@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.9.0 — 2026-07-26
+
+### Visual deep-zoom target browser
+
+- Added a searchable target dialog with category filters, rendered previews,
+  descriptions, exact coordinates, recommended settings and source links.
+- Added a compressed atlas of 48×30 XPM previews for every curated target and a reproducible
+  CPU thumbnail-generation script.
+- Kept the compact quick selector and existing free right-click target workflow.
+
+### Validation
+
+- Added filtering, category and packaged-atlas regressions.
+- Extended the Xvfb GUI smoke test to open and filter the visual browser.
+
 ## 0.8.0 — 2026-07-25
 
 ### Curated deep-zoom targets

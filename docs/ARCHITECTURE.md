@@ -64,7 +64,7 @@ Renderer modules remain responsible for numerical values, perturbation, CUDA exe
 
 Future PRs should follow these boundaries:
 
-- target thumbnails and search belong to separate UI components backed by the existing catalog;
+- target previews and search belong to separate UI components backed by the existing catalog;
 - X/Y/zoom keyframes produce `CameraState` values and do not manipulate Tk variables directly;
 - offline frame jobs call renderers through a non-Tk orchestration layer;
 - video encoding consumes completed RGB or higher-bit-depth frames and does not own camera interpolation;
@@ -77,3 +77,9 @@ Future PRs should follow these boundaries:
 - renderer precision and CPU/CUDA parity remain covered by numerical tests;
 - the Xvfb smoke test verifies only the assembled GUI wiring;
 - physical CUDA performance and Windows packaging remain separate target-system checks.
+
+## Target browser
+
+`target_browser.py` owns target search, category filtering, packaged preview loading and the browser window. It receives callbacks for applying a target; it
+does not mutate camera, renderer or flight state directly. Preview generation
+is reproducible through `scripts/generate_target_thumbnails.py`.
