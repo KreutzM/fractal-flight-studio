@@ -93,10 +93,32 @@ class PreflightReport:
     total_elapsed_seconds: float
 
     @property
-    def safe(self) -> bool:
-        return not self.issues and not self.stopped_early and len(self.samples) == len(
+    def complete(self) -> bool:
+        return not self.stopped_early and len(self.samples) == len(
             self.plan.sample_times_text
         )
+
+    @property
+    def warnings(self) -> tuple[PreflightIssue, ...]:
+        return tuple(
+            issue for issue in self.issues if issue.kind is PreflightIssueKind.VISUAL
+        )
+
+    @property
+    def blocking_issues(self) -> tuple[PreflightIssue, ...]:
+        return tuple(
+            issue for issue in self.issues if issue.kind is not PreflightIssueKind.VISUAL
+        )
+
+    @property
+    def safe(self) -> bool:
+        return self.complete and not self.issues
+
+    @property
+    def exportable(self) -> bool:
+        """Whether export may proceed after separately confirming visual warnings."""
+
+        return self.complete and not self.blocking_issues
 
     @property
     def first_issue(self) -> PreflightIssue | None:
