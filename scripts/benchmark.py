@@ -1,15 +1,43 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
+from collections.abc import Mapping
+from dataclasses import fields, is_dataclass, replace
+from enum import Enum
 import json
 import platform
 from pathlib import Path
 import statistics
 import time
+from typing import Any
+
+import numpy as np
 
 from fractal_flight_studio.models import FractalKind, RenderRequest, Viewport
 from fractal_flight_studio.renderers import available_renderers, select_renderer
+
+
+def _json_compatible(value: Any) -> Any:
+    """Convert benchmark metadata to JSON values without hiding unknown types."""
+
+    if value is None or isinstance(value, (str, bool, int, float)):
+        return value
+    if isinstance(value, np.generic):
+        return _json_compatible(value.item())
+    if isinstance(value, Enum):
+        return _json_compatible(value.value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return {
+            field.name: _json_compatible(getattr(value, field.name))
+            for field in fields(value)
+        }
+    if isinstance(value, Mapping):
+        return {str(key): _json_compatible(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_compatible(item) for item in value]
+    raise TypeError(
+        f"benchmark metadata contains unsupported value {type(value).__name__}"
+    )
 
 
 def _scenarios() -> list[tuple[str, RenderRequest]]:
@@ -99,7 +127,7 @@ def main() -> int:
                 "steady_wall_seconds_median": wall_median,
                 "steady_frame_fps": 1.0 / frame_median,
                 "steady_mpix_per_second": megapixels / frame_median,
-                "details": result.details,
+                "details": _json_compatible(result.details),
             }
             records.append(record)
             print(
