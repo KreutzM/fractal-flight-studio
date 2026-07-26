@@ -8,6 +8,7 @@ Fractal Flight Studio separates numerical rendering, application state and Tk pr
 Tk GUI (`app.py`, `app_ui.py`, `flight_app.py`)
     ├── CameraState
     ├── CameraPath / FlightKeyframe
+    ├── CameraPathDraft / timeline editor
     ├── path preflight
     ├── offline frame planning / rendering
     ├── direct FFmpeg MP4 encoding
@@ -48,6 +49,12 @@ Path evaluation is independent of Tk, rendering speed and wall-clock time:
 
 This component is the common camera source for a timeline editor, low-resolution preflight and deterministic offline frame renderer.
 
+### Timeline and keyframe editing
+
+`path_editor.py` provides the Tk-independent `CameraPathDraft`. A draft preserves exact decimal camera text and exact timeline positions while allowing temporary states that are not yet exportable, such as a single keyframe. Mutations return new draft values, automatically keep keyframes in timeline order and reject duplicate times. Only `build_path()` crosses the boundary into an immutable, fully validated `CameraPath`.
+
+`timeline_editor.py` is a non-modal Tk adapter over that model. It can capture the current camera, copy a packaged catalog target, edit time/easing/camera text, remove keyframes and preview either a selected keyframe or an interpolated timeline position. The window reports valid paths back to the application through a callback; it does not own rendering, preflight or export.
+
 ### Path preflight
 
 `preflight.py` performs a bounded diagnostic render pass over a `CameraPath` without depending on Tk or wall-clock scheduling.
@@ -55,7 +62,7 @@ This component is the common camera source for a timeline editor, low-resolution
 - The path is sampled at exact decimal times and always includes both endpoints.
 - A configurable sample cap evenly decimates very long paths without first expanding an unbounded time list.
 - Every sample derives a low-resolution `RenderRequest` from an immutable request template while retaining exact camera text.
-- Tone state is local to the preflight run and is not stored in widgets or the renderer's implicit GUI session.
+- Tone state is local to the preflight run and is not stored in widgets or the renderer's implicit interactive session.
 - Renderer pixel-grid metadata, explicit grid exhaustion, runtime failures and the shared RGB visual-quality classifier produce structured issues.
 - The result is an immutable `PreflightReport`; RGB frames are deliberately not retained.
 
@@ -129,7 +136,7 @@ Renderer modules remain responsible for numerical values, perturbation, CUDA exe
 Future PRs should follow these boundaries:
 
 - target previews and search belong to separate UI components backed by the existing catalog;
-- timeline editors build `FlightKeyframe` and `CameraPath` values and do not manipulate Tk variables directly;
+- timeline windows edit immutable `CameraPathDraft` values and publish only validated `CameraPath` objects;
 - preflight evaluates a path through `run_path_preflight` and reports diagnostics without retaining frame images;
 - full-resolution work is planned with `build_offline_frame_plan`, evaluated with `iter_offline_frame_jobs` and rendered through the stateless offline-frame API;
 - constant-rate MP4 export uses `build_mp4_export_plan` and `export_path_to_mp4`, consumes completed RGB frames and does not own camera interpolation;
@@ -138,7 +145,7 @@ Future PRs should follow these boundaries:
 
 ## Testing strategy
 
-- camera, path, preflight, offline planning and controller behavior is tested without Tk;
+- camera, path drafts, path interpolation, preflight, offline planning and controller behavior is tested without Tk;
 - preflight workload planning and diagnostics use deterministic fake renderers;
 - offline frame cadence, random-access jobs, RGB ownership and contextual failures use deterministic fake renderers;
 - FFmpeg command construction, process cleanup, error propagation, atomic publication and cancellation use deterministic fake processes;
