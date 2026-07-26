@@ -9,6 +9,7 @@ Tk GUI (`app.py`, `app_ui.py`, `flight_app.py`)
     ├── CameraState
     ├── CameraPath / FlightKeyframe
     ├── path preflight
+    ├── offline frame planning / rendering
     ├── RenderController
     ├── FlightController
     ├── target catalog
@@ -59,13 +60,29 @@ This component is the common camera source for a timeline editor, low-resolution
 
 This layer diagnoses a path before expensive offline rendering. It does not own timeline editing, full-resolution frame production or video encoding.
 
+### Offline frame rendering
+
+`offline_render.py` turns a validated `CameraPath` into deterministic full-resolution frame jobs and rendered RGB frames without depending on Tk, timers or output files.
+
+- Frame cadence is represented exactly by an integer numerator and denominator, including rates such as `30000/1001`.
+- `OfflineFramePlan` stores only the duration, cadence and frame count; individual times are calculated lazily by frame index instead of expanding a large timeline.
+- A configurable frame cap rejects accidental oversized jobs before rendering begins.
+- An exact endpoint may be appended when the path duration is not on the regular cadence. Consumers that require cadence-only output can disable this behavior.
+- `iter_offline_frame_jobs` supports deterministic start/stop index ranges for resumable or chunked work.
+- Every job derives an immutable `RenderRequest` from the template while retaining exact camera text.
+- A single frame can be rendered independently by index. Automatic tone mapping is intentionally stateless at this stage so results do not depend on previously rendered frames or chunk boundaries.
+- `OfflineFrame` owns a copied 8-bit RGB array and compact scalar metadata. The iterator does not retain earlier frames.
+- Renderer failures are wrapped with the exact frame index and timeline time.
+
+This layer produces frames only. PNG writing, FFmpeg processes, temporal production tone state and higher-bit-depth output remain separate responsibilities.
+
 ### `RenderController`
 
-`RenderController` owns the single render worker, request generations and invalidation coalescing. Tk remains responsible only for scheduling a non-blocking poll and displaying the completed image.
+`RenderController` owns the interactive single-render worker, request generations and invalidation coalescing. Tk remains responsible only for scheduling a non-blocking poll and displaying the completed image.
 
 A new UI change invalidates the current generation. If a render is already active, no second worker job is queued. When the active job completes, the GUI submits one render for the newest state.
 
-This boundary is intentionally independent of Tk so a later offline renderer can use the same lifecycle rules with a different scheduler.
+This boundary remains specific to interactive rendering. Offline rendering follows its deterministic frame plan directly and does not inherit GUI invalidation or coalescing behavior.
 
 ### `FlightController`
 
@@ -96,15 +113,16 @@ Future PRs should follow these boundaries:
 - target previews and search belong to separate UI components backed by the existing catalog;
 - timeline editors build `FlightKeyframe` and `CameraPath` values and do not manipulate Tk variables directly;
 - preflight evaluates a path through `run_path_preflight` and reports diagnostics without retaining frame images;
-- offline frame jobs evaluate `CameraPath` by deterministic frame time and call renderers through a non-Tk orchestration layer;
+- full-resolution work is planned with `build_offline_frame_plan`, evaluated with `iter_offline_frame_jobs` and rendered through the stateless offline-frame API;
 - video encoding consumes completed RGB or higher-bit-depth frames and does not own camera interpolation;
 - temporal tone state belongs to a render session, not to widgets;
 - persistent projects serialize camera/keyframe text without reducing it to absolute `float` values.
 
 ## Testing strategy
 
-- camera, path, preflight and controller behavior is tested without Tk;
+- camera, path, preflight, offline planning and controller behavior is tested without Tk;
 - preflight workload planning and diagnostics use deterministic fake renderers;
+- offline frame cadence, random-access jobs, RGB ownership and contextual failures use deterministic fake renderers;
 - renderer precision and CPU/CUDA parity remain covered by numerical tests;
 - the Xvfb smoke test verifies only the assembled GUI wiring;
 - physical CUDA performance and Windows packaging remain separate target-system checks.
