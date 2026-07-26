@@ -12,6 +12,7 @@ Tk GUI (`app.py`, `app_ui.py`, `flight_app.py`)
     ├── path preflight
     ├── offline frame planning / rendering
     ├── direct FFmpeg MP4 encoding
+    ├── preflight / export workflow controller
     ├── RenderController
     ├── FlightController
     ├── target catalog
@@ -101,6 +102,21 @@ This layer produces frames only. File publication and video process ownership re
 
 This layer does not own camera interpolation, preflight decisions, timeline editing or temporal tone-state policy. Hardware encoding, PNG checkpoint sequences and higher-bit-depth video remain later extensions.
 
+### Preflight and export workflow
+
+`export_controller.py` owns one background worker, cooperative cancellation and thread-safe progress snapshots for FFmpeg probing, path preflight and MP4 export. `export_dialog.py` is a Tk adapter over that controller.
+
+- the dialog captures an immutable render request and exact `CameraPath` before each job;
+- interactive preview submissions are paused while the export worker owns the shared renderer;
+- preflight reports progress per completed sample and can be cancelled between samples;
+- MP4 progress is forwarded from the raw-RGB encoder without updating Tk from a worker thread;
+- a successful preflight is fingerprinted against the exact path, renderer and render settings; changing relevant settings requires another preflight before export;
+- constant-rate frame plans use `append_endpoint=False` and show the planned frame count before work starts;
+- FFmpeg discovery, output selection, overwrite policy, codec preset and CRF are explicit user choices;
+- closing the application requests cancellation and shuts down the workflow worker without blocking Tk.
+
+The controller does not own widgets and the dialog does not render frames itself. Project persistence, temporal production tone state and hardware encoders remain separate extensions.
+
 ### `RenderController`
 
 `RenderController` owns the interactive single-render worker, request generations and invalidation coalescing. Tk remains responsible only for scheduling a non-blocking poll and displaying the completed image.
@@ -149,6 +165,7 @@ Future PRs should follow these boundaries:
 - preflight workload planning and diagnostics use deterministic fake renderers;
 - offline frame cadence, random-access jobs, RGB ownership and contextual failures use deterministic fake renderers;
 - FFmpeg command construction, process cleanup, error propagation, atomic publication and cancellation use deterministic fake processes;
+- export workflow configuration, fingerprints, progress and cooperative preflight cancellation are tested without Tk;
 - renderer precision and CPU/CUDA parity remain covered by numerical tests;
 - the Xvfb smoke test verifies only the assembled GUI wiring;
 - physical CUDA performance, native FFmpeg encoder availability and Windows packaging remain separate target-system checks.

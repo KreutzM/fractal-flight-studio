@@ -8,6 +8,7 @@ from fractal_flight_studio.deep_zoom import PixelGridExhaustedError, PixelGridQu
 from fractal_flight_studio.flight_path import CameraPath, Easing, FlightKeyframe
 from fractal_flight_studio.models import RenderRequest
 from fractal_flight_studio.preflight import (
+    PreflightCancelled,
     PreflightIssueKind,
     PreflightSettings,
     build_preflight_plan,
@@ -183,3 +184,40 @@ def test_settings_reject_invalid_workloads():
         PreflightSettings(max_samples=1)
     with pytest.raises(ValueError, match="finite and positive"):
         PreflightSettings(sample_interval_seconds_text="0")
+
+
+def test_preflight_reports_progress_for_each_completed_sample():
+    progress = []
+    report = run_path_preflight(
+        _path("1"),
+        RenderRequest(),
+        _Renderer(),
+        PreflightSettings(sample_interval_seconds_text="0.5"),
+        progress=lambda sample, total: progress.append(
+            (sample.index, sample.time_seconds_text, total)
+        ),
+    )
+
+    assert report.safe
+    assert progress == [(0, "0.0", 3), (1, "0.5", 3), (2, "1.0", 3)]
+
+
+def test_preflight_cancellation_stops_before_next_sample():
+    calls = 0
+
+    def cancelled():
+        nonlocal calls
+        calls += 1
+        return calls >= 2
+
+    renderer = _Renderer()
+    with pytest.raises(PreflightCancelled, match="after 1 samples"):
+        run_path_preflight(
+            _path("2"),
+            RenderRequest(),
+            renderer,
+            PreflightSettings(sample_interval_seconds_text="0.5"),
+            cancellation_requested=cancelled,
+        )
+
+    assert len(renderer.requests) == 1

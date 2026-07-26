@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Callable, Protocol, TypeAlias
 
 import mpmath as mp
 
@@ -13,6 +13,12 @@ from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
 from .models import RenderRequest
 
 ScalarDetail: TypeAlias = bool | float | int | str | None
+PreflightProgressCallback: TypeAlias = Callable[["PreflightSample", int], None]
+CancellationCheck: TypeAlias = Callable[[], bool]
+
+
+class PreflightCancelled(RuntimeError):
+    pass
 
 
 class _FrameRenderer(Protocol):
@@ -87,10 +93,32 @@ class PreflightReport:
     total_elapsed_seconds: float
 
     @property
-    def safe(self) -> bool:
-        return not self.issues and not self.stopped_early and len(self.samples) == len(
+    def complete(self) -> bool:
+        return not self.stopped_early and len(self.samples) == len(
             self.plan.sample_times_text
         )
+
+    @property
+    def warnings(self) -> tuple[PreflightIssue, ...]:
+        return tuple(
+            issue for issue in self.issues if issue.kind is PreflightIssueKind.VISUAL
+        )
+
+    @property
+    def blocking_issues(self) -> tuple[PreflightIssue, ...]:
+        return tuple(
+            issue for issue in self.issues if issue.kind is not PreflightIssueKind.VISUAL
+        )
+
+    @property
+    def safe(self) -> bool:
+        return self.complete and not self.issues
+
+    @property
+    def exportable(self) -> bool:
+        """Whether export may proceed after separately confirming visual warnings."""
+
+        return self.complete and not self.blocking_issues
 
     @property
     def first_issue(self) -> PreflightIssue | None:
@@ -133,6 +161,8 @@ def run_path_preflight(
     phase: float = 0.0,
     tone_mapping: str = "auto",
     tone_smoothing: float = 0.16,
+    progress: PreflightProgressCallback | None = None,
+    cancellation_requested: CancellationCheck | None = None,
 ) -> PreflightReport:
     plan = build_preflight_plan(path, settings)
     samples: list[PreflightSample] = []
@@ -154,6 +184,10 @@ def run_path_preflight(
     )
 
     for index, time_text in enumerate(plan.sample_times_text):
+        if cancellation_requested is not None and cancellation_requested():
+            raise PreflightCancelled(
+                f"path preflight cancelled after {len(samples)} samples"
+            )
         camera = path.evaluate(time_text)
         request = replace(
             request_template,
@@ -227,18 +261,19 @@ def run_path_preflight(
             )
 
         issues.extend(sample_issues)
-        samples.append(
-            PreflightSample(
-                index=index,
-                time_seconds_text=time_text,
-                camera=camera,
-                backend=backend,
-                elapsed_seconds=elapsed,
-                visual_quality=visual_quality,
-                details=details,
-                safe=not sample_issues,
-            )
+        sample = PreflightSample(
+            index=index,
+            time_seconds_text=time_text,
+            camera=camera,
+            backend=backend,
+            elapsed_seconds=elapsed,
+            visual_quality=visual_quality,
+            details=details,
+            safe=not sample_issues,
         )
+        samples.append(sample)
+        if progress is not None:
+            progress(sample, len(plan.sample_times_text))
         if sample_issues and settings.stop_on_failure:
             stopped_early = index + 1 < len(plan.sample_times_text)
             break

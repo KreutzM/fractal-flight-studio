@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import tkinter as tk
 
+from fractal_flight_studio.camera import CameraState
 from fractal_flight_studio.flight_app import FractalStudioApp
+from fractal_flight_studio.flight_path import (
+    CameraPath,
+    CenterInterpolation,
+    FlightKeyframe,
+)
 
 
 def main() -> int:
@@ -36,6 +42,32 @@ def main() -> int:
     assert app.deep_zoom_target_var.get() == selected.name
     browser.destroy()
     root.update_idletasks()
+
+    app.open_timeline_editor()
+    timeline = app.timeline_editor
+    assert timeline is not None
+    assert (
+        timeline.draft.keyframes[0].center_interpolation
+        is CenterInterpolation.FOCUS
+    )
+    timeline.destroy()
+    root.update_idletasks()
+
+    app.camera_path = CameraPath(
+        (
+            FlightKeyframe("0", CameraState("-0.5", "0", "3.5")),
+            FlightKeyframe("2", CameraState("-0.75", "0.1", "0.1")),
+        )
+    )
+    app.open_export_dialog()
+    export_dialog = app.export_dialog
+    assert export_dialog is not None
+    root.update_idletasks()
+    assert "2 Keyframes" in export_dialog.path_summary_var.get()
+    assert "60 Frames" in export_dialog.plan_summary_var.get()
+    export_dialog.destroy()
+    root.update_idletasks()
+
     app.preview_scale_var.set(0.15)
     root.after(250, app.request_render)
     root.after(2500, app._on_close)

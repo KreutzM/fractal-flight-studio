@@ -14,7 +14,20 @@ from .ffmpeg_mp4 import (
     encode_mp4_frames,
     probe_ffmpeg,
 )
-from .flight_path import CameraPath, Easing, FlightKeyframe
+from .export_controller import (
+    FlightExportConfiguration,
+    FlightExportController,
+    FlightExportJobKind,
+    FlightExportProgress,
+    flight_export_fingerprint,
+    parse_frame_rate,
+)
+from .flight_path import (
+    CameraPath,
+    CenterInterpolation,
+    Easing,
+    FlightKeyframe,
+)
 from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
 from .mp4_export import build_mp4_export_plan, export_path_to_mp4
 from .path_editor import CameraPathDraft
@@ -30,6 +43,7 @@ from .offline_render import (
     render_offline_frames,
 )
 from .preflight import (
+    PreflightCancelled,
     PreflightIssue,
     PreflightIssueKind,
     PreflightPlan,
@@ -44,10 +58,15 @@ __all__ = [
     "CameraPath",
     "CameraPathDraft",
     "CameraState",
+    "CenterInterpolation",
     "Easing",
     "FFmpegInfo",
     "FFmpegNotFoundError",
     "FFmpegProbeError",
+    "FlightExportConfiguration",
+    "FlightExportController",
+    "FlightExportJobKind",
+    "FlightExportProgress",
     "FlightKeyframe",
     "FractalKind",
     "Mp4ExportCancelled",
@@ -62,6 +81,7 @@ __all__ = [
     "OfflineFrameRenderError",
     "OfflineRenderSettings",
     "Precision",
+    "PreflightCancelled",
     "PreflightIssue",
     "PreflightIssueKind",
     "PreflightPlan",
@@ -76,7 +96,9 @@ __all__ = [
     "build_preflight_plan",
     "encode_mp4_frames",
     "export_path_to_mp4",
+    "flight_export_fingerprint",
     "iter_offline_frame_jobs",
+    "parse_frame_rate",
     "probe_ffmpeg",
     "render_offline_frame",
     "render_offline_frames",

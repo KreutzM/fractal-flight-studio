@@ -6,7 +6,7 @@ from typing import Callable, Sequence
 
 from .camera import CameraState
 from .deep_zoom_targets import DeepZoomTarget
-from .flight_path import CameraPath, Easing
+from .flight_path import CameraPath, CenterInterpolation, Easing
 from .path_editor import CameraPathDraft
 
 CameraGetter = Callable[[], CameraState]
@@ -43,12 +43,18 @@ class CameraPathEditorWindow(tk.Toplevel):
             CameraPathDraft.from_path(initial_path)
             if initial_path is not None
             else CameraPathDraft(digits=digits).add_keyframe(
-                "0", get_current_camera(), Easing.SMOOTHSTEP
+                "0",
+                get_current_camera(),
+                Easing.SMOOTHSTEP,
+                CenterInterpolation.FOCUS,
             )
         )
 
         self.time_var = tk.StringVar(value=self._draft.suggested_time_text())
         self.easing_var = tk.StringVar(value=Easing.SMOOTHSTEP.value)
+        self.center_interpolation_var = tk.StringVar(
+            value=CenterInterpolation.FOCUS.value
+        )
         self.center_x_var = tk.StringVar()
         self.center_y_var = tk.StringVar()
         self.width_var = tk.StringVar()
@@ -81,7 +87,7 @@ class CameraPathEditorWindow(tk.Toplevel):
         content.add(list_frame, weight=3)
         content.add(editor_frame, weight=2)
 
-        columns = ("time", "easing", "x", "y", "width")
+        columns = ("time", "easing", "center", "x", "y", "width")
         self.tree = ttk.Treeview(
             list_frame,
             columns=columns,
@@ -91,11 +97,19 @@ class CameraPathEditorWindow(tk.Toplevel):
         headings = {
             "time": "Zeit (s)",
             "easing": "Easing danach",
+            "center": "Mittelpunkt danach",
             "x": "Zentrum X",
             "y": "Zentrum Y",
             "width": "Ansichtsbreite",
         }
-        widths = {"time": 90, "easing": 115, "x": 170, "y": 170, "width": 145}
+        widths = {
+            "time": 90,
+            "easing": 115,
+            "center": 130,
+            "x": 170,
+            "y": 170,
+            "width": 145,
+        }
         for name in columns:
             self.tree.heading(name, text=headings[name])
             self.tree.column(name, width=widths[name], minwidth=70, stretch=name in {"x", "y"})
@@ -121,17 +135,26 @@ class CameraPathEditorWindow(tk.Toplevel):
             values=tuple(item.value for item in Easing),
             state="readonly",
         ).grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
-        ttk.Label(form, text="Zentrum X").grid(row=2, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(form, textvariable=self.center_x_var).grid(
-            row=2, column=1, sticky="ew", padx=(8, 0), pady=(6, 0)
+        ttk.Label(form, text="Mittelpunkt zum nächsten Frame").grid(
+            row=2, column=0, sticky="w", pady=(6, 0)
         )
-        ttk.Label(form, text="Zentrum Y").grid(row=3, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(form, textvariable=self.center_y_var).grid(
+        ttk.Combobox(
+            form,
+            textvariable=self.center_interpolation_var,
+            values=tuple(item.value for item in CenterInterpolation),
+            state="readonly",
+        ).grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=(6, 0))
+        ttk.Label(form, text="Zentrum X").grid(row=3, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(form, textvariable=self.center_x_var).grid(
             row=3, column=1, sticky="ew", padx=(8, 0), pady=(6, 0)
         )
-        ttk.Label(form, text="Ansichtsbreite").grid(row=4, column=0, sticky="w", pady=(6, 0))
-        ttk.Entry(form, textvariable=self.width_var).grid(
+        ttk.Label(form, text="Zentrum Y").grid(row=4, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(form, textvariable=self.center_y_var).grid(
             row=4, column=1, sticky="ew", padx=(8, 0), pady=(6, 0)
+        )
+        ttk.Label(form, text="Ansichtsbreite").grid(row=5, column=0, sticky="w", pady=(6, 0))
+        ttk.Entry(form, textvariable=self.width_var).grid(
+            row=5, column=1, sticky="ew", padx=(8, 0), pady=(6, 0)
         )
         form.columnconfigure(1, weight=1)
 
@@ -190,8 +213,9 @@ class CameraPathEditorWindow(tk.Toplevel):
         ttk.Label(
             editor_frame,
             text=(
-                "Der Easing-Wert gehört zum ausgehenden Segment. "
-                "Die Vorschau verändert nur die aktuelle Ansicht; der Flugplan bleibt unverändert."
+                "Easing und Mittelpunktmodus gehören zum ausgehenden Segment. "
+                "focus hält das nächste Ziel während starker Zooms im Bild; linear erzeugt "
+                "eine geradlinige X/Y-Fahrt. Die Vorschau verändert nur die aktuelle Ansicht."
             ),
             foreground="#555",
             wraplength=390,
@@ -237,6 +261,7 @@ class CameraPathEditorWindow(tk.Toplevel):
         frame = self._draft.keyframes[index]
         self.time_var.set(frame.time_seconds_text)
         self.easing_var.set(frame.easing.value)
+        self.center_interpolation_var.set(frame.center_interpolation.value)
         self._fill_camera(frame.camera)
         self.preview_time_var.set(frame.time_seconds_text)
 
@@ -246,6 +271,7 @@ class CameraPathEditorWindow(tk.Toplevel):
                 self.time_var.get().strip(),
                 self._camera_from_form(),
                 self.easing_var.get(),
+                self.center_interpolation_var.get(),
             )
         except Exception as exc:
             messagebox.showerror("Keyframe", str(exc), parent=self)
@@ -266,6 +292,7 @@ class CameraPathEditorWindow(tk.Toplevel):
                 time_seconds_text=self.time_var.get().strip(),
                 camera=self._camera_from_form(),
                 easing=self.easing_var.get(),
+                center_interpolation=self.center_interpolation_var.get(),
             )
         except Exception as exc:
             messagebox.showerror("Keyframe", str(exc), parent=self)
@@ -295,6 +322,7 @@ class CameraPathEditorWindow(tk.Toplevel):
                 values=(
                     frame.time_seconds_text,
                     frame.easing.value,
+                    frame.center_interpolation.value,
                     _compact(frame.camera.center_x_text),
                     _compact(frame.camera.center_y_text),
                     _compact(frame.camera.view_width_text),
