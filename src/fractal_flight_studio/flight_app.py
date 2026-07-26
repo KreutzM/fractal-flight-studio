@@ -8,9 +8,11 @@ from .app import FractalStudioApp as BaseFractalStudioApp
 from .camera import CameraState
 from .deep_zoom import PixelGridExhaustedError
 from .deep_zoom_targets import DeepZoomTarget, favorite_deep_zoom_targets, load_deep_zoom_targets
+from .flight_path import CameraPath
 from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
 from .models import RenderRequest
 from .target_browser import DeepZoomTargetBrowser
+from .timeline_editor import CameraPathEditorWindow
 from .renderers import available_renderers
 
 
@@ -21,6 +23,8 @@ class FractalStudioApp(BaseFractalStudioApp):
         self.deep_zoom_targets = favorite_deep_zoom_targets()
         self.all_deep_zoom_targets = load_deep_zoom_targets()
         self.target_browser: DeepZoomTargetBrowser | None = None
+        self.timeline_editor: CameraPathEditorWindow | None = None
+        self.camera_path: CameraPath | None = None
         self.deep_zoom_targets_by_name = {target.name: target for target in self.deep_zoom_targets}
         super().__init__(root)
         self._build_deep_zoom_target_bar()
@@ -53,6 +57,9 @@ class FractalStudioApp(BaseFractalStudioApp):
             side=tk.LEFT
         )
         ttk.Button(bar, text="Ziele durchsuchen …", command=self.open_target_browser).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
+        ttk.Button(bar, text="Flugplan …", command=self.open_timeline_editor).pack(
             side=tk.LEFT, padx=(6, 0)
         )
         self.deep_zoom_target_summary_var = tk.StringVar(value="")
@@ -129,6 +136,40 @@ class FractalStudioApp(BaseFractalStudioApp):
             on_set_target=lambda target: self._apply_browser_target(target, load_view=False),
             on_load_view=lambda target: self._apply_browser_target(target, load_view=True),
         )
+
+    def open_timeline_editor(self) -> None:
+        if self.timeline_editor is not None and self.timeline_editor.winfo_exists():
+            self.timeline_editor.deiconify()
+            self.timeline_editor.lift()
+            self.timeline_editor.focus_set()
+            return
+        self.timeline_editor = CameraPathEditorWindow(
+            self.root,
+            get_current_camera=lambda: self.camera,
+            targets=self.all_deep_zoom_targets,
+            on_preview=self._preview_camera_path,
+            on_path_changed=self._store_camera_path,
+            initial_path=self.camera_path,
+            digits=self._work_digits(),
+        )
+
+    def _store_camera_path(self, path: CameraPath | None) -> None:
+        self.camera_path = path
+        if path is not None:
+            self.position_var.set(
+                f"Flugplan bereit: {len(path.keyframes)} Keyframes, Dauer {path.duration_text} s."
+            )
+
+    def _preview_camera_path(self, camera: CameraState, time_seconds_text: str) -> None:
+        if self.flight_controller.running:
+            self._stop_flight()
+        self.camera = camera
+        self.position_var.set(
+            f"Flugplan-Vorschau bei {time_seconds_text} s.\n"
+            f"Zentrum: {camera.center_x_text}, {camera.center_y_text}; "
+            f"Breite: {camera.view_width_text}"
+        )
+        self.request_render()
 
     def _should_check_flight_result(self, generation: int) -> bool:
         return self.flight_controller.should_check_result(
