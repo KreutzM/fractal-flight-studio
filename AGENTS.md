@@ -39,20 +39,19 @@ xvfb-run -a env PYTHONPATH=src python scripts/gui_smoke.py
 
 ## Repository acquisition and GitHub publishing
 
-- Prefer a normal up-to-date local clone and normal `git push`; probe transport once at the start instead of repeatedly retrying unavailable paths.
-- A previously verified clone or snapshot may be reused for the next PR when its tree SHA exactly matches the current target-branch tree, even when the commit SHA differs because GitHub used squash or merge commits.
-- Reacquire a snapshot only when no verified local tree matches the current target tree. Verify its SHA-256 manifest and Git bundle before use.
-- Never develop against an unverified older tree or reconstruct current source by downloading unrelated individual files.
-- Before connector-based GitHub writes, read `docs/AGENT_GIT_WORKFLOW.md` and run `scripts/prepare_connector_publish.py` after the final local commit.
-- Publish related multi-file changes atomically: exact committed blobs, one tree, one commit with the current remote target commit as parent, then one branch-ref creation/update.
-- Stop at the first blob or tree SHA mismatch. Do not retry by copying, re-encoding, or manually editing file text.
-- Create the feature branch only after the verified tree and commit exist, then compare it with the target and require `behind_by == 0` plus only expected paths.
-- Repeated contents-API writes are only acceptable for a genuinely isolated single-file change.
+- Prefer a normal up-to-date local clone and normal `git push`; probe an unavailable transport only once per task.
+- When normal push is unavailable, prefer direct GitHub connector file operations for ordinary UTF-8 text changes.
+- Create the feature branch from the current target branch before connector edits. Read existing files first and pass their current blob SHA to updates.
+- Direct connector edits are the default for small and medium changes. Several focused connector commits are acceptable because pull requests are squash-merged.
+- Use the Git-data blob/tree/commit workflow only when exact byte preservation, binary files, executable modes, generated large payloads, or an atomic many-file commit materially require it.
+- Do not use the Git-data workflow merely to reduce the number of commits.
+- After connector writes, compare the feature branch with the target and require `behind_by == 0` plus only expected paths.
+- Before publishing, read `docs/AGENT_GIT_WORKFLOW.md` and select the least complex safe path described there.
 
 ## Development workflow
 
 - Work on a feature branch and open a pull request; do not commit directly to `main`.
-- Keep commits small, focused, and reviewable.
+- Keep commits small, focused, and reviewable. Multiple connector-generated commits are acceptable when the PR will be squash-merged.
 - Add or update tests for behavioral and numerical changes.
 - Update `CHANGELOG.md` for user-visible release behavior. Update `README.md` only when user workflows materially change, and update `TEST_REPORT.md` only when validation strategy or durable results change; avoid rewriting large documents mechanically in every PR.
 - Avoid committing generated images, benchmark output, virtual environments, build artifacts, or caches.
