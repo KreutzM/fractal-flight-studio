@@ -4,7 +4,12 @@ import mpmath as mp
 import pytest
 
 from fractal_flight_studio.camera import CameraState
-from fractal_flight_studio.flight_path import CameraPath, Easing, FlightKeyframe
+from fractal_flight_studio.flight_path import (
+    CameraPath,
+    CenterInterpolation,
+    Easing,
+    FlightKeyframe,
+)
 
 
 def _path(*, easing: Easing = Easing.LINEAR) -> CameraPath:
@@ -30,6 +35,77 @@ def test_linear_path_interpolates_xy_and_width_logarithmically():
     assert abs(y - mp.mpf("0.0625")) < mp.mpf("1e-95")
     with mp.workdps(100):
         assert abs(width / mp.mpf("4e-20") - 1) < mp.mpf("1e-95")
+
+
+def test_focus_center_interpolation_keeps_zoom_destination_in_view():
+    path = CameraPath(
+        (
+            FlightKeyframe(
+                "0",
+                CameraState("-0.5", "0", "4"),
+                Easing.LINEAR,
+                CenterInterpolation.FOCUS,
+            ),
+            FlightKeyframe("10", CameraState("-0.75", "0.125", "4e-40")),
+        ),
+        digits=100,
+    )
+
+    camera = path.evaluate("5")
+    with mp.workdps(100):
+        x, y, width = camera.values(digits=100)
+        start_x, start_y, start_width = path.keyframes[0].camera.values(digits=100)
+        end_x, end_y, end_width = path.keyframes[1].camera.values(digits=100)
+        expected_progress = (start_width - width) / (start_width - end_width)
+
+        assert abs(x - (start_x + (end_x - start_x) * expected_progress)) < mp.mpf("1e-95")
+        assert abs(y - (start_y + (end_y - start_y) * expected_progress)) < mp.mpf("1e-95")
+        assert abs(end_x - x) < width
+        assert abs(end_y - y) < width
+        assert x < mp.mpf("-0.74")
+
+
+def test_focus_path_has_no_last_frame_center_jump_at_thirty_fps():
+    path = CameraPath(
+        (
+            FlightKeyframe(
+                "0",
+                CameraState("-0.5", "0", "3.5"),
+                Easing.SMOOTHSTEP,
+                CenterInterpolation.FOCUS,
+            ),
+            FlightKeyframe(
+                "2",
+                CameraState("-0.74364386269", "0.13182590271", "0.00000013526"),
+            ),
+        ),
+        digits=86,
+    )
+
+    penultimate = path.evaluate(mp.mpf(59) / 30)
+    with mp.workdps(86):
+        x, y, width = penultimate.values(digits=86)
+        target_x, target_y, _ = path.keyframes[-1].camera.values(digits=86)
+        assert abs(target_x - x) < width / 4
+        assert abs(target_y - y) < width / 4
+
+
+def test_focus_center_interpolation_falls_back_to_linear_for_constant_width():
+    path = CameraPath(
+        (
+            FlightKeyframe(
+                "0",
+                CameraState("0", "0", "2"),
+                Easing.LINEAR,
+                CenterInterpolation.FOCUS,
+            ),
+            FlightKeyframe("2", CameraState("2", "4", "2")),
+        )
+    )
+
+    camera = path.evaluate("1")
+    assert mp.almosteq(mp.mpf(camera.center_x_text), mp.mpf("1"))
+    assert mp.almosteq(mp.mpf(camera.center_y_text), mp.mpf("2"))
 
 
 def test_smoothstep_is_applied_to_outgoing_segment():

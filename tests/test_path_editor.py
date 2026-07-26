@@ -3,7 +3,12 @@ from __future__ import annotations
 import pytest
 
 from fractal_flight_studio.camera import CameraState
-from fractal_flight_studio.flight_path import CameraPath, Easing, FlightKeyframe
+from fractal_flight_studio.flight_path import (
+    CameraPath,
+    CenterInterpolation,
+    Easing,
+    FlightKeyframe,
+)
 from fractal_flight_studio.path_editor import CameraPathDraft
 
 
@@ -22,7 +27,12 @@ def test_empty_draft_suggests_zero_and_is_not_valid():
 def test_add_keyframes_sorts_exact_times_and_builds_path():
     draft = CameraPathDraft()
     draft = draft.add_keyframe("10", _camera("10"), Easing.LINEAR)
-    draft = draft.add_keyframe("0", _camera("0"), Easing.SMOOTHERSTEP)
+    draft = draft.add_keyframe(
+        "0",
+        _camera("0"),
+        Easing.SMOOTHERSTEP,
+        CenterInterpolation.FOCUS,
+    )
     draft = draft.add_keyframe("2.5", _camera("2.5"), Easing.SMOOTHSTEP)
 
     path = draft.build_path()
@@ -30,6 +40,7 @@ def test_add_keyframes_sorts_exact_times_and_builds_path():
     assert tuple(frame.time_seconds_text for frame in path.keyframes) == ("0", "2.5", "10")
     assert path.duration_text == "10"
     assert path.keyframes[0].easing is Easing.SMOOTHERSTEP
+    assert path.keyframes[0].center_interpolation is CenterInterpolation.FOCUS
 
 
 def test_duplicate_time_is_rejected_unless_replaced():
@@ -48,12 +59,18 @@ def test_update_keyframe_reorders_without_losing_exact_camera_text():
     draft = draft.add_keyframe("10", _camera("10"))
     draft = draft.add_keyframe("20", deep, Easing.LINEAR)
 
-    updated = draft.update_keyframe(2, time_seconds_text="5", easing=Easing.SMOOTHERSTEP)
+    updated = draft.update_keyframe(
+        2,
+        time_seconds_text="5",
+        easing=Easing.SMOOTHERSTEP,
+        center_interpolation=CenterInterpolation.FOCUS,
+    )
 
     assert tuple(frame.time_seconds_text for frame in updated.keyframes) == ("0", "5", "10")
     assert updated.keyframes[1].camera is deep
     assert updated.keyframes[1].camera.view_width_text == "1e-420"
     assert updated.keyframes[1].easing is Easing.SMOOTHERSTEP
+    assert updated.keyframes[1].center_interpolation is CenterInterpolation.FOCUS
 
 
 def test_update_rejects_time_collision():

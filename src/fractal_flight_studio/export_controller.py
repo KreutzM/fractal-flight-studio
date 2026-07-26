@@ -190,6 +190,7 @@ def flight_export_fingerprint(
             frame.camera.center_y_text,
             frame.camera.view_width_text,
             frame.easing.value,
+            frame.center_interpolation.value,
         )
         for frame in path.keyframes
     )

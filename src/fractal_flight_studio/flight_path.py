@@ -9,6 +9,13 @@ import mpmath as mp
 from .camera import CameraState
 
 
+class CenterInterpolation(str, Enum):
+    """How the camera center moves through an outgoing keyframe segment."""
+
+    LINEAR = "linear"
+    FOCUS = "focus"
+
+
 class Easing(str, Enum):
     """Interpolation curve used by a keyframe's outgoing segment."""
 
@@ -37,9 +44,15 @@ class FlightKeyframe:
     time_seconds_text: str
     camera: CameraState
     easing: Easing | str = Easing.SMOOTHSTEP
+    center_interpolation: CenterInterpolation | str = CenterInterpolation.LINEAR
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "easing", Easing(self.easing))
+        object.__setattr__(
+            self,
+            "center_interpolation",
+            CenterInterpolation(self.center_interpolation),
+        )
 
     def time_seconds(self, *, digits: int) -> mp.mpf:
         try:
@@ -103,15 +116,31 @@ class CameraPath:
 
             start_x, start_y, start_width = start.camera.values(digits=self.digits)
             end_x, end_y, end_width = end.camera.values(digits=self.digits)
-            center_x = start_x + (end_x - start_x) * eased
-            center_y = start_y + (end_y - start_y) * eased
             log_width = mp.log(start_width) + (
                 mp.log(end_width) - mp.log(start_width)
             ) * eased
+            view_width = mp.exp(log_width)
+            center_progress = eased
+            if (
+                start.center_interpolation is CenterInterpolation.FOCUS
+                and start_width != end_width
+            ):
+                # Tie center movement to the current zoom scale. During a deep
+                # zoom-in this moves the camera toward the destination early,
+                # keeping that destination at an approximately stable screen
+                # position instead of zooming into arbitrary points between
+                # the two centers. The symmetric zoom-out behavior keeps the
+                # starting detail stable until enough context is visible.
+                center_progress = (start_width - view_width) / (
+                    start_width - end_width
+                )
+                center_progress = min(mp.mpf("1"), max(mp.mpf("0"), center_progress))
+            center_x = start_x + (end_x - start_x) * center_progress
+            center_y = start_y + (end_y - start_y) * center_progress
             return CameraState.from_values(
                 center_x,
                 center_y,
-                mp.exp(log_width),
+                view_width,
                 digits=self.digits,
             )
 

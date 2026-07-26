@@ -6,7 +6,11 @@ import tkinter as tk
 
 from fractal_flight_studio.camera import CameraState
 from fractal_flight_studio.flight_app import FractalStudioApp
-from fractal_flight_studio.flight_path import CameraPath, FlightKeyframe
+from fractal_flight_studio.flight_path import (
+    CameraPath,
+    CenterInterpolation,
+    FlightKeyframe,
+)
 
 
 def main() -> int:
@@ -37,6 +41,16 @@ def main() -> int:
     assert app.flight_controller.target_text == (selected.center_x_text, selected.center_y_text)
     assert app.deep_zoom_target_var.get() == selected.name
     browser.destroy()
+    root.update_idletasks()
+
+    app.open_timeline_editor()
+    timeline = app.timeline_editor
+    assert timeline is not None
+    assert (
+        timeline.draft.keyframes[0].center_interpolation
+        is CenterInterpolation.FOCUS
+    )
+    timeline.destroy()
     root.update_idletasks()
 
     app.camera_path = CameraPath(

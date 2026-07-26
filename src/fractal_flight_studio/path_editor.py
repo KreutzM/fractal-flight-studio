@@ -6,7 +6,12 @@ from typing import Iterable
 import mpmath as mp
 
 from .camera import CameraState
-from .flight_path import CameraPath, Easing, FlightKeyframe
+from .flight_path import (
+    CameraPath,
+    CenterInterpolation,
+    Easing,
+    FlightKeyframe,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,10 +90,13 @@ class CameraPathDraft:
         time_seconds_text: str,
         camera: CameraState,
         easing: Easing | str = Easing.SMOOTHSTEP,
+        center_interpolation: CenterInterpolation | str = CenterInterpolation.LINEAR,
         *,
         replace_existing: bool = False,
     ) -> "CameraPathDraft":
-        candidate = FlightKeyframe(time_seconds_text, camera, easing)
+        candidate = FlightKeyframe(
+            time_seconds_text, camera, easing, center_interpolation
+        )
         candidate_time = candidate.time_seconds(digits=self.digits)
         frames = list(self.keyframes)
         matching_index = next(
@@ -110,12 +118,18 @@ class CameraPathDraft:
         time_seconds_text: str | None = None,
         camera: CameraState | None = None,
         easing: Easing | str | None = None,
+        center_interpolation: CenterInterpolation | str | None = None,
     ) -> "CameraPathDraft":
         current = self.keyframes[index]
         candidate = FlightKeyframe(
             current.time_seconds_text if time_seconds_text is None else time_seconds_text,
             current.camera if camera is None else camera,
             current.easing if easing is None else easing,
+            (
+                current.center_interpolation
+                if center_interpolation is None
+                else center_interpolation
+            ),
         )
         frames = list(self.keyframes)
         del frames[index]

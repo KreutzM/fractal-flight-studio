@@ -22,7 +22,12 @@ from .export_controller import (
     flight_export_fingerprint,
     parse_frame_rate,
 )
-from .flight_path import CameraPath, Easing, FlightKeyframe
+from .flight_path import (
+    CameraPath,
+    CenterInterpolation,
+    Easing,
+    FlightKeyframe,
+)
 from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
 from .mp4_export import build_mp4_export_plan, export_path_to_mp4
 from .path_editor import CameraPathDraft
@@ -53,6 +58,7 @@ __all__ = [
     "CameraPath",
     "CameraPathDraft",
     "CameraState",
+    "CenterInterpolation",
     "Easing",
     "FFmpegInfo",
     "FFmpegNotFoundError",

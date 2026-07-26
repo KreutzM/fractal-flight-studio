@@ -9,7 +9,11 @@ import pytest
 import fractal_flight_studio.export_controller as workflow
 from fractal_flight_studio.camera import CameraState
 from fractal_flight_studio.ffmpeg_mp4 import FFmpegInfo, Mp4ExportResult
-from fractal_flight_studio.flight_path import CameraPath, FlightKeyframe
+from fractal_flight_studio.flight_path import (
+    CameraPath,
+    CenterInterpolation,
+    FlightKeyframe,
+)
 from fractal_flight_studio.models import RenderRequest
 from fractal_flight_studio.preflight import PreflightCancelled, PreflightSettings
 from fractal_flight_studio.renderers import FrameResult
@@ -79,9 +83,27 @@ def test_fingerprint_changes_with_path_or_render_configuration():
         1.0,
         workflow.FlightExportConfiguration(width=1280, height=720),
     )
+    changed_center_mode = workflow.flight_export_fingerprint(
+        CameraPath(
+            (
+                FlightKeyframe(
+                    "0",
+                    CameraState("-0.5", "0", "3"),
+                    center_interpolation=CenterInterpolation.FOCUS,
+                ),
+                FlightKeyframe("1", CameraState("-0.75", "0.1", "0.1")),
+            )
+        ),
+        request,
+        "fake",
+        "inferno",
+        1.0,
+        config,
+    )
 
     assert first != changed_request
     assert first != changed_config
+    assert first != changed_center_mode
 
 
 def test_controller_runs_preflight_and_publishes_progress():
