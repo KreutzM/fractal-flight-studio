@@ -10,6 +10,14 @@ Date: 2026-07-25
 - no NVIDIA driver or physical CUDA device exposed to the build environment
 - GUI tested with Tk under Xvfb
 
+## Architecture refactor under test
+
+- exact-text `CameraState` as the canonical interactive camera model
+- Tk-independent render-generation and worker lifecycle controller
+- Tk-independent flight target, limit-step and last-good-frame controller
+- GUI adapters reduced to widget wiring, status presentation and quality-gate integration
+- documented component boundaries for the upcoming browser, keyframe and video work
+
 ## Version 0.8.0 changes under test
 
 - packaged JSON catalog with ten curated Mandelbrot deep-zoom targets
@@ -45,7 +53,7 @@ Result: passed locally.
 PYTHONPATH=src python -m pytest -q
 ```
 
-Result: `57 passed` locally.
+Result: `65 passed` locally.
 
 New coverage includes:
 
@@ -56,6 +64,9 @@ New coverage includes:
 - application of recommended fractal, iteration, reference-bit and palette
   settings
 - separate behavior for setting a flight target and loading its complete view
+- deep-precision pan and zoom through the canonical camera state
+- render invalidation coalescing and executor-submission recovery
+- flight last-good-frame ownership and final-frame quality-gate behavior
 
 ### Curated-target render validation
 
