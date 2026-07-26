@@ -10,6 +10,7 @@ Tk GUI (`app.py`, `app_ui.py`, `flight_app.py`)
     ├── CameraPath / FlightKeyframe
     ├── path preflight
     ├── offline frame planning / rendering
+    ├── direct FFmpeg MP4 encoding
     ├── RenderController
     ├── FlightController
     ├── target catalog
@@ -74,7 +75,24 @@ This layer diagnoses a path before expensive offline rendering. It does not own 
 - `OfflineFrame` owns a copied 8-bit RGB array and compact scalar metadata. The iterator does not retain earlier frames.
 - Renderer failures are wrapped with the exact frame index and timeline time.
 
-This layer produces frames only. PNG writing, FFmpeg processes, temporal production tone state and higher-bit-depth output remain separate responsibilities.
+This layer produces frames only. File publication and video process ownership remain separate responsibilities.
+
+### Direct FFmpeg MP4 export
+
+`ffmpeg_mp4.py` owns FFmpeg discovery, version probing and the lifetime of one raw-RGB-to-MP4 encoder process. `mp4_export.py` adapts a complete offline frame plan and connects its frame iterator to that process.
+
+- RGB24 frame bytes are streamed directly to FFmpeg through binary standard input; no PNG sequence is required.
+- The exact numerator/denominator frame rate is passed to FFmpeg without converting it to a binary floating-point rate.
+- The initial production profile is software H.264 (`libx264`) with CRF quality control and `yuv420p` compatibility output.
+- `yuv420p` exports reject odd dimensions before the encoder starts.
+- The inclusive offline sampling plan is converted to constant-rate video semantics: an explicitly appended endpoint is rejected, while an endpoint exactly on cadence is omitted so a one-second, 30-fps path produces 30 rather than 31 video frames.
+- Frame index, exact frame time, RGB shape and byte depth are validated before each write.
+- Encoder standard error is drained concurrently into a bounded diagnostic buffer so long jobs cannot deadlock on a full pipe.
+- Cancellation, broken pipes, renderer failures and encoder failures terminate the child process and remove the incomplete file.
+- FFmpeg writes to a unique temporary file in the destination directory. The final `.mp4` path is replaced atomically only after a successful encoder exit.
+- Progress callbacks report completed frames and streamed bytes without moving state into Tk widgets.
+
+This layer does not own camera interpolation, preflight decisions, timeline editing or temporal tone-state policy. Hardware encoding, PNG checkpoint sequences and higher-bit-depth video remain later extensions.
 
 ### `RenderController`
 
@@ -114,8 +132,8 @@ Future PRs should follow these boundaries:
 - timeline editors build `FlightKeyframe` and `CameraPath` values and do not manipulate Tk variables directly;
 - preflight evaluates a path through `run_path_preflight` and reports diagnostics without retaining frame images;
 - full-resolution work is planned with `build_offline_frame_plan`, evaluated with `iter_offline_frame_jobs` and rendered through the stateless offline-frame API;
-- video encoding consumes completed RGB or higher-bit-depth frames and does not own camera interpolation;
-- temporal tone state belongs to a render session, not to widgets;
+- constant-rate MP4 export uses `build_mp4_export_plan` and `export_path_to_mp4`, consumes completed RGB frames and does not own camera interpolation;
+- temporal tone state belongs to a render session, not to widgets or FFmpeg;
 - persistent projects serialize camera/keyframe text without reducing it to absolute `float` values.
 
 ## Testing strategy
@@ -123,9 +141,10 @@ Future PRs should follow these boundaries:
 - camera, path, preflight, offline planning and controller behavior is tested without Tk;
 - preflight workload planning and diagnostics use deterministic fake renderers;
 - offline frame cadence, random-access jobs, RGB ownership and contextual failures use deterministic fake renderers;
+- FFmpeg command construction, process cleanup, error propagation, atomic publication and cancellation use deterministic fake processes;
 - renderer precision and CPU/CUDA parity remain covered by numerical tests;
 - the Xvfb smoke test verifies only the assembled GUI wiring;
-- physical CUDA performance and Windows packaging remain separate target-system checks.
+- physical CUDA performance, native FFmpeg encoder availability and Windows packaging remain separate target-system checks.
 
 ## Target browser
 
