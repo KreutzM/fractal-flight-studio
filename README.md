@@ -15,7 +15,8 @@ parallelisierter CPU-Renderer zur Verfügung.
 - Deep-Zoom-Modus für Mandelbrot mit stabilem hochpräzisem Referenzorbit, echtem Rebasing und Glitch-Reparatur
 - automatische Backend-Auswahl: CUDA, falls verfügbar, sonst Numba-CPU
 - sichtbare GPU-Diagnose mit Gerät, Treiber, Compute Capability und Fehlergrund
-- PNG-Export
+- PNG-Export sowie direkter H.264/H.265-MP4-Export über FFmpeg
+- visueller Flugplan-Editor mit exakten Keyframes, Preflight und abbrechbarem Hintergrundexport
 - CLI für Einzelbilder und logarithmische Frame-Sequenzen
 - persistente CUDA-Puffer und GPU-Farbgebung; adaptives Tone Mapping benötigt nur eine kleine Bildstichprobe plus RGB-Rückübertragung
 - Unit-, Integrations-, CLI- und CUDA-Simulator-Tests
@@ -29,6 +30,7 @@ parallelisierter CPU-Renderer zur Verfügung.
 - mpmath
 - Tkinter (bei den üblichen Windows- und macOS-Python-Installationen enthalten;
   unter Debian/Ubuntu gegebenenfalls `python3-tk` installieren)
+- für MP4-Export: eine FFmpeg-Installation, die über `PATH` oder einen expliziten Programmpfad erreichbar ist
 - für echte CUDA-Beschleunigung: aktueller NVIDIA-Treiber und die optionale
   Abhängigkeit `numba-cuda[cu12]`; das Windows-Startskript installiert sie
   automatisch, sobald `nvidia-smi` eine NVIDIA-GPU meldet
@@ -159,8 +161,19 @@ Python-API stehen außerdem `linear` für die unveränderte Rohdarstellung und
 - rechte Maustaste: Flugziel setzen
 - „Flug starten“: kontinuierlich zum Ziel zoomen; stoppt automatisch an der numerischen Präzisionsgrenze
 - „PNG exportieren“: Bild in aktueller Fensterauflösung speichern
+- „Flugplan …“: aktuelle Ansichten und Katalogziele als exakte X/Y/Zoom-Keyframes anlegen und Zwischenpositionen prüfen
+- „Video exportieren …“: Auflösung und Framerate planen, FFmpeg prüfen, einen Low-Resolution-Preflight ausführen und anschließend direkt als MP4 rendern
 
 Für normale Vorschau und Flug kann die Render-Skalierung getrennt auf 50 %, 75 % oder 100 % gesetzt werden. Auf CUDA-Systemen ist 100 % voreingestellt; auf CPU-Systemen 75 %. Die Statuszeile trennt Rechnen/Transfer von der Tk-Anzeige.
+
+### MP4-Workflow
+
+1. Im **Flugplan** mindestens zwei Keyframes anlegen; der erste muss bei 0 Sekunden liegen.
+2. Im Dialog **Video exportieren** Auflösung, konstante Framerate, Codec, CRF und Zieldatei wählen.
+3. FFmpeg prüfen und den Preflight starten. Der Preflight rendert kleine Stichproben entlang des exakten Pfads und meldet numerische, visuelle oder Backend-Fehler.
+4. Nach einem erfolgreichen Preflight den MP4-Export starten. RGB-Frames werden direkt an FFmpeg gestreamt; eine PNG-Zwischensequenz ist nicht erforderlich.
+
+Preflight und Export laufen außerhalb des Tk-Hauptthreads. Fortschritt und Abbruch bleiben deshalb auch bei langsamen Deep-Zoom-Frames bedienbar. Ändern sich Pfad oder relevante Rendereinstellungen, muss der Preflight vor dem Export erneut ausgeführt werden.
 
 ## CLI
 

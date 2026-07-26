@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from enum import Enum
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Callable, Protocol, TypeAlias
 
 import mpmath as mp
 
@@ -13,6 +13,12 @@ from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
 from .models import RenderRequest
 
 ScalarDetail: TypeAlias = bool | float | int | str | None
+PreflightProgressCallback: TypeAlias = Callable[["PreflightSample", int], None]
+CancellationCheck: TypeAlias = Callable[[], bool]
+
+
+class PreflightCancelled(RuntimeError):
+    pass
 
 
 class _FrameRenderer(Protocol):
@@ -133,6 +139,8 @@ def run_path_preflight(
     phase: float = 0.0,
     tone_mapping: str = "auto",
     tone_smoothing: float = 0.16,
+    progress: PreflightProgressCallback | None = None,
+    cancellation_requested: CancellationCheck | None = None,
 ) -> PreflightReport:
     plan = build_preflight_plan(path, settings)
     samples: list[PreflightSample] = []
@@ -154,6 +162,10 @@ def run_path_preflight(
     )
 
     for index, time_text in enumerate(plan.sample_times_text):
+        if cancellation_requested is not None and cancellation_requested():
+            raise PreflightCancelled(
+                f"path preflight cancelled after {len(samples)} samples"
+            )
         camera = path.evaluate(time_text)
         request = replace(
             request_template,
@@ -227,18 +239,19 @@ def run_path_preflight(
             )
 
         issues.extend(sample_issues)
-        samples.append(
-            PreflightSample(
-                index=index,
-                time_seconds_text=time_text,
-                camera=camera,
-                backend=backend,
-                elapsed_seconds=elapsed,
-                visual_quality=visual_quality,
-                details=details,
-                safe=not sample_issues,
-            )
+        sample = PreflightSample(
+            index=index,
+            time_seconds_text=time_text,
+            camera=camera,
+            backend=backend,
+            elapsed_seconds=elapsed,
+            visual_quality=visual_quality,
+            details=details,
+            safe=not sample_issues,
         )
+        samples.append(sample)
+        if progress is not None:
+            progress(sample, len(plan.sample_times_text))
         if sample_issues and settings.stop_on_failure:
             stopped_early = index + 1 < len(plan.sample_times_text)
             break

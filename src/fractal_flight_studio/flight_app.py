@@ -8,12 +8,14 @@ from .app import FractalStudioApp as BaseFractalStudioApp
 from .camera import CameraState
 from .deep_zoom import PixelGridExhaustedError
 from .deep_zoom_targets import DeepZoomTarget, favorite_deep_zoom_targets, load_deep_zoom_targets
+from .export_controller import FlightExportController
+from .export_dialog import FlightExportDialog
 from .flight_path import CameraPath
 from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
 from .models import RenderRequest
 from .target_browser import DeepZoomTargetBrowser
 from .timeline_editor import CameraPathEditorWindow
-from .renderers import available_renderers
+from .renderers import available_renderers, select_renderer
 
 
 class FractalStudioApp(BaseFractalStudioApp):
@@ -24,6 +26,8 @@ class FractalStudioApp(BaseFractalStudioApp):
         self.all_deep_zoom_targets = load_deep_zoom_targets()
         self.target_browser: DeepZoomTargetBrowser | None = None
         self.timeline_editor: CameraPathEditorWindow | None = None
+        self.export_dialog: FlightExportDialog | None = None
+        self.export_controller = FlightExportController()
         self.camera_path: CameraPath | None = None
         self.deep_zoom_targets_by_name = {target.name: target for target in self.deep_zoom_targets}
         super().__init__(root)
@@ -62,11 +66,20 @@ class FractalStudioApp(BaseFractalStudioApp):
         ttk.Button(bar, text="Flugplan …", command=self.open_timeline_editor).pack(
             side=tk.LEFT, padx=(6, 0)
         )
+        ttk.Button(bar, text="Video exportieren …", command=self.open_export_dialog).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
         self.deep_zoom_target_summary_var = tk.StringVar(value="")
         ttk.Label(bar, textvariable=self.deep_zoom_target_summary_var, foreground="#555").pack(
             side=tk.LEFT, padx=(10, 0), fill=tk.X, expand=True
         )
         self._update_deep_zoom_target_summary()
+
+
+    def request_render(self) -> None:
+        if self.export_controller.busy:
+            return
+        super().request_render()
 
     def _selected_deep_zoom_target(self) -> DeepZoomTarget | None:
         return self.deep_zoom_targets_by_name.get(self.deep_zoom_target_var.get())
@@ -159,6 +172,34 @@ class FractalStudioApp(BaseFractalStudioApp):
             self.position_var.set(
                 f"Flugplan bereit: {len(path.keyframes)} Keyframes, Dauer {path.duration_text} s."
             )
+        if self.export_dialog is not None and self.export_dialog.winfo_exists():
+            self.export_dialog.refresh_path_summary()
+
+    def open_export_dialog(self) -> None:
+        if self.export_dialog is not None and self.export_dialog.winfo_exists():
+            self.export_dialog.deiconify()
+            self.export_dialog.lift()
+            self.export_dialog.focus_set()
+            self.export_dialog.refresh_path_summary()
+            return
+        if self.flight_controller.running:
+            self._stop_flight()
+        self.export_dialog = FlightExportDialog(
+            self.root,
+            controller=self.export_controller,
+            get_path=lambda: self.camera_path,
+            build_request=lambda: self._request(1.0),
+            get_renderer=lambda: select_renderer(self.backend_var.get()),
+            get_palette=lambda: self.palette_var.get(),
+            get_cycles=lambda: float(self.cycles_var.get()),
+            ready_for_background_job=self._ready_for_export_job,
+            on_job_finished=self.request_render,
+        )
+
+    def _ready_for_export_job(self) -> bool:
+        if self.flight_controller.running:
+            self._stop_flight()
+        return not self.render_controller.busy
 
     def _preview_camera_path(self, camera: CameraState, time_seconds_text: str) -> None:
         if self.flight_controller.running:
@@ -208,6 +249,11 @@ class FractalStudioApp(BaseFractalStudioApp):
             "Flug automatisch gestoppt: Der nächste Frame ist nicht mehr sinnvoll aufgelöst.\n"
             + details
         )
+
+    def _on_close(self) -> None:
+        self.export_controller.cancel()
+        self.export_controller.shutdown()
+        super()._on_close()
 
     def _finish_render(self, future: Future, generation: int, request: RenderRequest) -> None:
         try:
