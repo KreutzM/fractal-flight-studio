@@ -8,6 +8,7 @@ Fractal Flight Studio separates numerical rendering, application state and Tk pr
 Tk GUI (`app.py`, `app_ui.py`, `flight_app.py`)
     ├── CameraState
     ├── CameraPath / FlightKeyframe
+    ├── path preflight
     ├── RenderController
     ├── FlightController
     ├── target catalog
@@ -43,7 +44,20 @@ Path evaluation is independent of Tk, rendering speed and wall-clock time:
 - evaluation before or after the timeline returns the exact endpoint camera;
 - camera text is never reduced to absolute FP64 values.
 
-This component is the common camera source for a later timeline editor, low-resolution preflight and deterministic offline frame renderer.
+This component is the common camera source for a timeline editor, low-resolution preflight and deterministic offline frame renderer.
+
+### Path preflight
+
+`preflight.py` performs a bounded diagnostic render pass over a `CameraPath` without depending on Tk or wall-clock scheduling.
+
+- The path is sampled at exact decimal times and always includes both endpoints.
+- A configurable sample cap evenly decimates very long paths without first expanding an unbounded time list.
+- Every sample derives a low-resolution `RenderRequest` from an immutable request template while retaining exact camera text.
+- Tone state is local to the preflight run and is not stored in widgets or the renderer's implicit GUI session.
+- Renderer pixel-grid metadata, explicit grid exhaustion, runtime failures and the shared RGB visual-quality classifier produce structured issues.
+- The result is an immutable `PreflightReport`; RGB frames are deliberately not retained.
+
+This layer diagnoses a path before expensive offline rendering. It does not own timeline editing, full-resolution frame production or video encoding.
 
 ### `RenderController`
 
@@ -81,6 +95,7 @@ Future PRs should follow these boundaries:
 
 - target previews and search belong to separate UI components backed by the existing catalog;
 - timeline editors build `FlightKeyframe` and `CameraPath` values and do not manipulate Tk variables directly;
+- preflight evaluates a path through `run_path_preflight` and reports diagnostics without retaining frame images;
 - offline frame jobs evaluate `CameraPath` by deterministic frame time and call renderers through a non-Tk orchestration layer;
 - video encoding consumes completed RGB or higher-bit-depth frames and does not own camera interpolation;
 - temporal tone state belongs to a render session, not to widgets;
@@ -88,7 +103,8 @@ Future PRs should follow these boundaries:
 
 ## Testing strategy
 
-- camera, path and controller behavior is tested without Tk;
+- camera, path, preflight and controller behavior is tested without Tk;
+- preflight workload planning and diagnostics use deterministic fake renderers;
 - renderer precision and CPU/CUDA parity remain covered by numerical tests;
 - the Xvfb smoke test verifies only the assembled GUI wiring;
 - physical CUDA performance and Windows packaging remain separate target-system checks.
