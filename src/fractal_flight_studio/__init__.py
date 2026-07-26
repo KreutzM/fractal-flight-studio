@@ -1,8 +1,22 @@
 """Fractal Flight Studio."""
 
 from .camera import CameraState
+from .ffmpeg_mp4 import (
+    FFmpegInfo,
+    FFmpegNotFoundError,
+    FFmpegProbeError,
+    Mp4ExportCancelled,
+    Mp4ExportError,
+    Mp4ExportPlan,
+    Mp4ExportProgress,
+    Mp4ExportResult,
+    Mp4ExportSettings,
+    encode_mp4_frames,
+    probe_ffmpeg,
+)
 from .flight_path import CameraPath, Easing, FlightKeyframe
 from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
+from .mp4_export import build_mp4_export_plan, export_path_to_mp4
 from .offline_render import (
     OfflineFrame,
     OfflineFrameJob,
@@ -29,8 +43,17 @@ __all__ = [
     "CameraPath",
     "CameraState",
     "Easing",
+    "FFmpegInfo",
+    "FFmpegNotFoundError",
+    "FFmpegProbeError",
     "FlightKeyframe",
     "FractalKind",
+    "Mp4ExportCancelled",
+    "Mp4ExportError",
+    "Mp4ExportPlan",
+    "Mp4ExportProgress",
+    "Mp4ExportResult",
+    "Mp4ExportSettings",
     "OfflineFrame",
     "OfflineFrameJob",
     "OfflineFramePlan",
@@ -46,9 +69,13 @@ __all__ = [
     "RenderMode",
     "RenderRequest",
     "Viewport",
+    "build_mp4_export_plan",
     "build_offline_frame_plan",
     "build_preflight_plan",
+    "encode_mp4_frames",
+    "export_path_to_mp4",
     "iter_offline_frame_jobs",
+    "probe_ffmpeg",
     "render_offline_frame",
     "render_offline_frames",
     "run_path_preflight",
