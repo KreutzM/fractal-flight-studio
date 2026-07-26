@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Iterable
 
@@ -42,80 +42,84 @@ class FlightKeyframe:
         object.__setattr__(self, "easing", Easing(self.easing))
 
     def time_seconds(self, *, digits: int) -> mp.mpf:
-        with mp.workdps(digits):
-            value = mp.mpf(self.time_seconds_text)
+        try:
+            with mp.workdps(digits):
+                value = mp.mpf(self.time_seconds_text)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("keyframe time must be a decimal number") from exc
         if not mp.isfinite(value) or value < 0:
             raise ValueError("keyframe time must be finite and non-negative")
         self.camera.values(digits=digits)
         return value
 
 
+@dataclass(frozen=True, slots=True)
 class CameraPath:
     """Immutable, deterministic interpolation through exact camera keyframes."""
 
-    def __init__(self, keyframes: Iterable[FlightKeyframe], *, digits: int = 80) -> None:
-        if digits < 20:
+    keyframes: tuple[FlightKeyframe, ...] | Iterable[FlightKeyframe]
+    digits: int = 80
+    _times: tuple[mp.mpf, ...] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if self.digits < 20:
             raise ValueError("path precision must be at least 20 decimal digits")
-        frames = tuple(keyframes)
+        frames = tuple(self.keyframes)
         if len(frames) < 2:
             raise ValueError("a camera path requires at least two keyframes")
-        times = tuple(frame.time_seconds(digits=digits) for frame in frames)
+        times = tuple(frame.time_seconds(digits=self.digits) for frame in frames)
         if times[0] != 0:
             raise ValueError("the first keyframe must start at zero seconds")
         if any(right <= left for left, right in zip(times, times[1:])):
             raise ValueError("keyframe times must be strictly increasing")
-        self._keyframes = frames
-        self._times = times
-        self._digits = digits
-
-    @property
-    def keyframes(self) -> tuple[FlightKeyframe, ...]:
-        return self._keyframes
-
-    @property
-    def digits(self) -> int:
-        return self._digits
+        object.__setattr__(self, "keyframes", frames)
+        object.__setattr__(self, "_times", times)
 
     @property
     def duration_text(self) -> str:
-        return self._keyframes[-1].time_seconds_text
+        return self.keyframes[-1].time_seconds_text
 
     def evaluate(self, time_seconds: str | int | float | mp.mpf) -> CameraState:
-        with mp.workdps(self._digits):
+        with mp.workdps(self.digits):
             time_value = _to_mpf(time_seconds)
             if not mp.isfinite(time_value):
                 raise ValueError("evaluation time must be finite")
             if time_value <= self._times[0]:
-                return self._keyframes[0].camera
+                return self.keyframes[0].camera
             if time_value >= self._times[-1]:
-                return self._keyframes[-1].camera
+                return self.keyframes[-1].camera
 
             segment_index = next(
                 index
                 for index, end_time in enumerate(self._times[1:])
                 if time_value <= end_time
             )
-            start = self._keyframes[segment_index]
-            end = self._keyframes[segment_index + 1]
+            start = self.keyframes[segment_index]
+            end = self.keyframes[segment_index + 1]
             start_time = self._times[segment_index]
             end_time = self._times[segment_index + 1]
             progress = (time_value - start_time) / (end_time - start_time)
             eased = start.easing.apply(progress)
 
-            start_x, start_y, start_width = start.camera.values(digits=self._digits)
-            end_x, end_y, end_width = end.camera.values(digits=self._digits)
+            start_x, start_y, start_width = start.camera.values(digits=self.digits)
+            end_x, end_y, end_width = end.camera.values(digits=self.digits)
             center_x = start_x + (end_x - start_x) * eased
             center_y = start_y + (end_y - start_y) * eased
-            log_width = mp.log(start_width) + (mp.log(end_width) - mp.log(start_width)) * eased
+            log_width = mp.log(start_width) + (
+                mp.log(end_width) - mp.log(start_width)
+            ) * eased
             return CameraState.from_values(
                 center_x,
                 center_y,
                 mp.exp(log_width),
-                digits=self._digits,
+                digits=self.digits,
             )
 
 
 def _to_mpf(value: str | int | float | mp.mpf) -> mp.mpf:
-    if isinstance(value, float):
-        return mp.mpf(repr(value))
-    return mp.mpf(value)
+    try:
+        if isinstance(value, float):
+            return mp.mpf(repr(value))
+        return mp.mpf(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("evaluation time must be a decimal number") from exc
