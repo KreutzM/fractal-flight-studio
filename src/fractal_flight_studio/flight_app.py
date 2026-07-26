@@ -9,7 +9,7 @@ from .camera import CameraState
 from .deep_zoom import PixelGridExhaustedError
 from .deep_zoom_targets import DeepZoomTarget, favorite_deep_zoom_targets, load_deep_zoom_targets
 from .export_controller import FlightExportController
-from .export_dialog import FlightExportDialog
+from .export_warning_dialog import FlightExportDialog
 from .flight_path import CameraPath
 from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
 from .models import RenderRequest
