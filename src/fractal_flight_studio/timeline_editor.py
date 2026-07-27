@@ -7,11 +7,11 @@ from typing import Callable, Sequence
 from .camera import CameraState
 from .deep_zoom_targets import DeepZoomTarget
 from .flight_path import CameraPath, CenterInterpolation, Easing
+from .flight_plan_session import FlightPlanSession
 from .path_editor import CameraPathDraft
 
 CameraGetter = Callable[[], CameraState]
 CameraPreview = Callable[[CameraState, str], None]
-PathChanged = Callable[[CameraPath | None], None]
 
 
 class CameraPathEditorWindow(tk.Toplevel):
@@ -24,9 +24,7 @@ class CameraPathEditorWindow(tk.Toplevel):
         get_current_camera: CameraGetter,
         targets: Sequence[DeepZoomTarget],
         on_preview: CameraPreview,
-        on_path_changed: PathChanged,
-        initial_path: CameraPath | None = None,
-        digits: int = 80,
+        session: FlightPlanSession,
     ) -> None:
         super().__init__(parent)
         self.title("Flugplan / Keyframes")
@@ -38,19 +36,10 @@ class CameraPathEditorWindow(tk.Toplevel):
         self._targets = tuple(targets)
         self._targets_by_name = {target.name: target for target in self._targets}
         self._on_preview = on_preview
-        self._on_path_changed = on_path_changed
-        self._draft = (
-            CameraPathDraft.from_path(initial_path)
-            if initial_path is not None
-            else CameraPathDraft(digits=digits).add_keyframe(
-                "0",
-                get_current_camera(),
-                Easing.SMOOTHSTEP,
-                CenterInterpolation.FOCUS,
-            )
-        )
+        self._session = session
+        self._displayed_draft: CameraPathDraft | None = None
 
-        self.time_var = tk.StringVar(value=self._draft.suggested_time_text())
+        self.time_var = tk.StringVar(value=self.draft.suggested_time_text())
         self.easing_var = tk.StringVar(value=Easing.SMOOTHSTEP.value)
         self.center_interpolation_var = tk.StringVar(
             value=CenterInterpolation.FOCUS.value
@@ -63,20 +52,47 @@ class CameraPathEditorWindow(tk.Toplevel):
         self.status_var = tk.StringVar()
 
         self._build_ui()
-        self.protocol("WM_DELETE_WINDOW", self.destroy)
+        self.protocol("WM_DELETE_WINDOW", self._close)
         self._fill_camera(self._get_current_camera())
-        self._refresh_tree(select_time="0")
-        self._publish_path_state()
+        self._session.add_listener(self._on_session_changed, notify=True)
 
     @property
     def draft(self) -> CameraPathDraft:
-        return self._draft
+        return self._session.camera_draft
+
+    @property
+    def _draft(self) -> CameraPathDraft:
+        """Compatibility view; the session remains the only draft owner."""
+
+        return self._session.camera_draft
+
+    @_draft.setter
+    def _draft(self, draft: CameraPathDraft) -> None:
+        self._session.set_camera_draft(draft)
 
     @property
     def current_path(self) -> CameraPath | None:
-        if not self._draft.valid:
-            return None
-        return self._draft.build_path()
+        return self._session.camera_path
+
+    def _close(self) -> None:
+        self.destroy()
+
+    def destroy(self) -> None:
+        self._session.remove_listener(self._on_session_changed)
+        super().destroy()
+
+    def _on_session_changed(self, session: FlightPlanSession) -> None:
+        if not self.winfo_exists():
+            return
+        draft_changed = self._displayed_draft != session.camera_draft
+        if draft_changed:
+            selected_time = None
+            index = session.selected_keyframe_index
+            if index is not None and index < len(session.camera_draft.keyframes):
+                selected_time = session.camera_draft.keyframes[index].time_seconds_text
+            self._refresh_tree(select_time=selected_time)
+        self.preview_time_var.set(session.playhead_time_text)
+        self._publish_path_state()
 
     def _build_ui(self) -> None:
         content = ttk.Panedwindow(self, orient=tk.HORIZONTAL)
@@ -224,7 +240,7 @@ class CameraPathEditorWindow(tk.Toplevel):
 
         footer = ttk.Frame(self, padding=(12, 0, 12, 12))
         footer.pack(fill=tk.X)
-        ttk.Button(footer, text="Schließen", command=self.destroy).pack(side=tk.RIGHT)
+        ttk.Button(footer, text="Schließen", command=self._close).pack(side=tk.RIGHT)
 
     def _camera_from_form(self) -> CameraState:
         camera = CameraState(
@@ -232,7 +248,7 @@ class CameraPathEditorWindow(tk.Toplevel):
             self.center_y_var.get().strip(),
             self.width_var.get().strip(),
         )
-        camera.values(digits=self._draft.digits)
+        camera.values(digits=self.draft.digits)
         return camera
 
     def _fill_camera(self, camera: CameraState) -> None:
@@ -259,6 +275,7 @@ class CameraPathEditorWindow(tk.Toplevel):
         if index is None or index >= len(self._draft.keyframes):
             return
         frame = self._draft.keyframes[index]
+        self._session.set_selected_keyframe(index)
         self.time_var.set(frame.time_seconds_text)
         self.easing_var.set(frame.easing.value)
         self.center_interpolation_var.set(frame.center_interpolation.value)
@@ -267,7 +284,7 @@ class CameraPathEditorWindow(tk.Toplevel):
 
     def _add_keyframe(self) -> None:
         try:
-            self._draft = self._draft.add_keyframe(
+            draft = self.draft.add_keyframe(
                 self.time_var.get().strip(),
                 self._camera_from_form(),
                 self.easing_var.get(),
@@ -277,7 +294,8 @@ class CameraPathEditorWindow(tk.Toplevel):
             messagebox.showerror("Keyframe", str(exc), parent=self)
             return
         selected_time = self.time_var.get().strip()
-        self.time_var.set(self._draft.suggested_time_text())
+        self._session.set_camera_draft(draft)
+        self.time_var.set(draft.suggested_time_text())
         self._refresh_tree(select_time=selected_time)
         self._publish_path_state()
 
@@ -287,7 +305,7 @@ class CameraPathEditorWindow(tk.Toplevel):
             messagebox.showinfo("Keyframe", "Wähle zuerst einen Keyframe aus.", parent=self)
             return
         try:
-            self._draft = self._draft.update_keyframe(
+            draft = self.draft.update_keyframe(
                 index,
                 time_seconds_text=self.time_var.get().strip(),
                 camera=self._camera_from_form(),
@@ -298,6 +316,7 @@ class CameraPathEditorWindow(tk.Toplevel):
             messagebox.showerror("Keyframe", str(exc), parent=self)
             return
         selected_time = self.time_var.get().strip()
+        self._session.set_camera_draft(draft)
         self._refresh_tree(select_time=selected_time)
         self._publish_path_state()
 
@@ -306,14 +325,16 @@ class CameraPathEditorWindow(tk.Toplevel):
         if index is None:
             messagebox.showinfo("Keyframe", "Wähle zuerst einen Keyframe aus.", parent=self)
             return
-        self._draft = self._draft.remove_keyframe(index)
+        self._session.set_camera_draft(self.draft.remove_keyframe(index))
         self._refresh_tree()
         self._publish_path_state()
 
     def _refresh_tree(self, *, select_time: str | None = None) -> None:
         self.tree.delete(*self.tree.get_children())
         selected_item: str | None = None
-        for index, frame in enumerate(self._draft.keyframes):
+        draft = self.draft
+        self._displayed_draft = draft
+        for index, frame in enumerate(draft.keyframes):
             item = str(index)
             self.tree.insert(
                 "",
@@ -330,8 +351,9 @@ class CameraPathEditorWindow(tk.Toplevel):
             )
             if select_time is not None and frame.time_seconds_text == select_time:
                 selected_item = item
-        if selected_item is None and self._draft.keyframes:
-            selected_item = "0"
+        if selected_item is None and draft.keyframes:
+            selected_index = self._session.selected_keyframe_index
+            selected_item = str(selected_index if selected_index is not None else 0)
         if selected_item is not None:
             self.tree.selection_set(selected_item)
             self.tree.focus(selected_item)
@@ -339,32 +361,35 @@ class CameraPathEditorWindow(tk.Toplevel):
             self._on_selection_changed()
 
     def _publish_path_state(self) -> None:
-        error = self._draft.validation_error
+        draft = self.draft
+        error = self._session.validation_error
         if error is None:
-            path = self._draft.build_path()
+            path = self._session.camera_path
+            assert path is not None
             self.status_var.set(
-                f"Gültiger Flugplan: {len(path.keyframes)} Keyframes, Dauer {path.duration_text} s."
+                f"Gültiger Flugplan: {len(path.keyframes)} Keyframes, Dauer {path.duration_text} s; "
+                f"{len(self._session.render_track.cues)} Render-Cues."
             )
-            self._on_path_changed(path)
         else:
             self.status_var.set(f"Entwurf noch nicht exportierbar: {error}")
-            self._on_path_changed(None)
 
     def _preview_path(self) -> None:
         try:
-            path = self._draft.build_path()
+            path = self.draft.build_path()
             time_text = self.preview_time_var.get().strip()
             camera = path.evaluate(time_text)
         except Exception as exc:
             messagebox.showerror("Pfadvorschau", str(exc), parent=self)
             return
+        self._session.set_playhead(time_text)
         self._on_preview(camera, time_text)
 
     def _preview_selected_keyframe(self) -> None:
         index = self._selected_index()
         if index is None:
             return
-        frame = self._draft.keyframes[index]
+        frame = self.draft.keyframes[index]
+        self._session.set_playhead(frame.time_seconds_text)
         self._on_preview(frame.camera, frame.time_seconds_text)
 
 
