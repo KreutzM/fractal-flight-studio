@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Protocol, TypeAlias
 
@@ -8,9 +8,15 @@ import mpmath as mp
 
 from .camera import CameraState
 from .deep_zoom import PixelGridExhaustedError
-from .flight_path import CameraPath
 from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
+from .flight_plan import (
+    FlightSource,
+    evaluate_flight_frame,
+    flight_path_for,
+    flight_plan_fingerprint,
+)
 from .models import RenderRequest
+from .palettes import PaletteInput, palette_cache_key
 
 ScalarDetail: TypeAlias = bool | float | int | str | None
 PreflightProgressCallback: TypeAlias = Callable[["PreflightSample", int], None]
@@ -125,7 +131,8 @@ class PreflightReport:
         return self.issues[0] if self.issues else None
 
 
-def build_preflight_plan(path: CameraPath, settings: PreflightSettings) -> PreflightPlan:
+def build_preflight_plan(source: FlightSource, settings: PreflightSettings) -> PreflightPlan:
+    path = flight_path_for(source)
     with mp.workdps(path.digits):
         duration = mp.mpf(path.duration_text)
         interval = mp.mpf(settings.sample_interval_seconds_text)
@@ -151,12 +158,12 @@ def build_preflight_plan(path: CameraPath, settings: PreflightSettings) -> Prefl
 
 
 def run_path_preflight(
-    path: CameraPath,
+    source: FlightSource,
     request_template: RenderRequest,
     renderer: _FrameRenderer,
     settings: PreflightSettings = PreflightSettings(),
     *,
-    palette: str = "inferno",
+    palette: PaletteInput = "inferno",
     cycles: float = 1.0,
     phase: float = 0.0,
     tone_mapping: str = "auto",
@@ -164,7 +171,8 @@ def run_path_preflight(
     progress: PreflightProgressCallback | None = None,
     cancellation_requested: CancellationCheck | None = None,
 ) -> PreflightReport:
-    plan = build_preflight_plan(path, settings)
+    path = flight_path_for(source)
+    plan = build_preflight_plan(source, settings)
     samples: list[PreflightSample] = []
     issues: list[PreflightIssue] = []
     tone_state = None
@@ -172,12 +180,10 @@ def run_path_preflight(
     stopped_early = False
     scene_key = (
         "path-preflight",
-        request_template.fractal.value,
+        flight_plan_fingerprint(source),
         request_template.precision.value,
         request_template.render_mode.value,
-        request_template.reference_bits,
-        request_template.max_iterations,
-        palette,
+        palette_cache_key(palette),
         cycles,
         phase,
         tone_mapping,
@@ -188,17 +194,21 @@ def run_path_preflight(
             raise PreflightCancelled(
                 f"path preflight cancelled after {len(samples)} samples"
             )
-        camera = path.evaluate(time_text)
-        request = replace(
+        evaluated = evaluate_flight_frame(
+            source,
+            time_text,
+            request_template,
+            palette=palette,
+            cycles=cycles,
+        )
+        camera = evaluated.camera
+        request = evaluated.build_request(
             request_template,
             width=plan.width,
             height=plan.height,
-            viewport=camera.proxy_viewport(digits=path.digits),
-            center_x_text=camera.center_x_text,
-            center_y_text=camera.center_y_text,
-            view_width_text=camera.view_width_text,
         )
-        request.validate()
+        frame_palette = evaluated.render.palette
+        frame_cycles = evaluated.render.cycles
         sample_issues: list[PreflightIssue] = []
         backend = getattr(renderer, "name", "unknown")
         elapsed = 0.0
@@ -208,8 +218,8 @@ def run_path_preflight(
         try:
             frame = renderer.render_frame(
                 request,
-                palette,
-                cycles,
+                frame_palette,
+                frame_cycles,
                 phase,
                 tone_mapping=tone_mapping,
                 tone_state=tone_state,

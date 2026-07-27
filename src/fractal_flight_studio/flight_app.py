@@ -12,7 +12,12 @@ from .deep_zoom_targets import DeepZoomTarget, favorite_deep_zoom_targets, load_
 from .export_controller import FlightExportController
 from .export_warning_dialog import FlightExportDialog
 from .flight_path import CameraPath
-from .flight_plan import FlightPlanDefaults, FlightScene, RenderProfile
+from .flight_plan import (
+    EvaluatedFlightFrame,
+    FlightPlanDefaults,
+    FlightScene,
+    RenderProfile,
+)
 from .flight_plan_io import (
     FLIGHT_PLAN_EXTENSION,
     load_flight_plan,
@@ -40,6 +45,7 @@ class FractalStudioApp(BaseFractalStudioApp):
         self.export_controller = FlightExportController()
         self._applying_flight_plan_settings = False
         self._last_session_document_state: tuple[object, ...] | None = None
+        self._path_preview_frame: EvaluatedFlightFrame | None = None
         self.deep_zoom_targets_by_name = {target.name: target for target in self.deep_zoom_targets}
         super().__init__(root)
         self.flight_plan_session = FlightPlanSession.new(
@@ -119,6 +125,7 @@ class FractalStudioApp(BaseFractalStudioApp):
     def _sync_primary_flight_settings(self, *_args) -> None:
         if self._applying_flight_plan_settings or not hasattr(self, "flight_plan_session"):
             return
+        self._path_preview_frame = None
         try:
             self.flight_plan_session.sync_primary_settings(
                 self._current_flight_scene(),
@@ -155,6 +162,7 @@ class FractalStudioApp(BaseFractalStudioApp):
         if state == self._last_session_document_state:
             return
         self._last_session_document_state = state
+        self._path_preview_frame = None
         path = session.camera_path
         marker = " *" if session.dirty else ""
         if path is None:
@@ -222,6 +230,25 @@ class FractalStudioApp(BaseFractalStudioApp):
         self._update_deep_zoom_target_summary()
 
 
+    def _request(self, scale: float | None = None) -> RenderRequest:
+        request = super()._request(scale)
+        frame = self._path_preview_frame
+        if frame is None:
+            return request
+        return frame.build_request(
+            request,
+            width=request.width,
+            height=request.height,
+        )
+
+    def _render_palette(self):
+        frame = self._path_preview_frame
+        return frame.render.palette if frame is not None else super()._render_palette()
+
+    def _render_cycles(self) -> float:
+        frame = self._path_preview_frame
+        return frame.render.cycles if frame is not None else super()._render_cycles()
+
     def request_render(self) -> None:
         if self.export_controller.busy:
             return
@@ -243,6 +270,7 @@ class FractalStudioApp(BaseFractalStudioApp):
         self._update_deep_zoom_target_summary()
 
     def _apply_deep_zoom_target(self, target: DeepZoomTarget, *, load_view: bool) -> None:
+        self._path_preview_frame = None
         if self.flight_controller.running:
             self._stop_flight()
         self.fractal_var.set(target.fractal.value)
@@ -409,6 +437,17 @@ class FractalStudioApp(BaseFractalStudioApp):
         self.position_var.set(f"Flugplan {document.name} gespeichert: {path}")
         return True
 
+    def _export_flight_source(self):
+        if not self.flight_plan_session.valid:
+            return None
+        return self.flight_plan_session.build_document()
+
+    def _export_request(self) -> RenderRequest:
+        # Export settings are evaluated from the complete flight document.  The
+        # template contributes only technical settings and must not inherit a
+        # transient single-time preview profile.
+        return super()._request(1.0)
+
     def open_export_dialog(self) -> None:
         if self.export_dialog is not None and self.export_dialog.winfo_exists():
             self.export_dialog.deiconify()
@@ -421,8 +460,8 @@ class FractalStudioApp(BaseFractalStudioApp):
         self.export_dialog = FlightExportDialog(
             self.root,
             controller=self.export_controller,
-            get_path=lambda: self.camera_path,
-            build_request=lambda: self._request(1.0),
+            get_path=self._export_flight_source,
+            build_request=self._export_request,
             get_renderer=lambda: select_renderer(self.backend_var.get()),
             get_palette=lambda: self.palette_var.get(),
             get_cycles=lambda: float(self.cycles_var.get()),
@@ -438,13 +477,42 @@ class FractalStudioApp(BaseFractalStudioApp):
     def _preview_camera_path(self, camera: CameraState, time_seconds_text: str) -> None:
         if self.flight_controller.running:
             self._stop_flight()
-        self.camera = camera
+        frame = self.flight_plan_session.build_document().evaluate(time_seconds_text)
+        self._path_preview_frame = frame
+        self.camera = frame.camera
         self.position_var.set(
-            f"Flugplan-Vorschau bei {time_seconds_text} s.\n"
-            f"Zentrum: {camera.center_x_text}, {camera.center_y_text}; "
-            f"Breite: {camera.view_width_text}"
+            f"Flugplan-Vorschau bei {frame.time_seconds_text} s.\n"
+            f"Zentrum: {frame.camera.center_x_text}, {frame.camera.center_y_text}; "
+            f"Breite: {frame.camera.view_width_text}; "
+            f"{frame.render.max_iterations} Iter.; "
+            f"{frame.render.reference_bits} Bit; "
+            f"Palette {frame.render.palette.description}."
         )
         self.request_render()
+
+
+    def _clear_path_preview(self) -> None:
+        self._path_preview_frame = None
+
+    def _zoom_event(self, event: tk.Event, factor: float) -> None:
+        self._clear_path_preview()
+        super()._zoom_event(event, factor)
+
+    def _drag_move(self, event: tk.Event) -> None:
+        self._clear_path_preview()
+        super()._drag_move(event)
+
+    def _set_flight_target(self, event: tk.Event) -> None:
+        self._clear_path_preview()
+        super()._set_flight_target(event)
+
+    def toggle_flight(self) -> None:
+        self._clear_path_preview()
+        super().toggle_flight()
+
+    def reset_view(self) -> None:
+        self._clear_path_preview()
+        super().reset_view()
 
     def _should_check_flight_result(self, generation: int) -> bool:
         return self.flight_controller.should_check_result(

@@ -7,6 +7,7 @@ import numpy as np
 from numba import cuda, float32
 
 from ..models import FractalKind, RenderRequest
+from ..palettes import PaletteInput
 from ..tonemapping import resolve_locked_tone_state, resolve_tone_state, sample_grid
 from .base import FrameResult
 from .cuda import CudaRenderer as _BaseCudaRenderer
@@ -135,7 +136,7 @@ class CudaRenderer(_BaseCudaRenderer):
     def render_frame(
         self,
         request: RenderRequest,
-        palette: str = "inferno",
+        palette: PaletteInput = "inferno",
         cycles: float = 1.0,
         phase: float = 0.0,
         tone_mapping: str = "auto",

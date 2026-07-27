@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from fractions import Fraction
 from typing import Any, Iterator, Protocol, Sequence, TypeAlias
@@ -9,8 +9,14 @@ import mpmath as mp
 import numpy as np
 
 from .camera import CameraState
-from .flight_path import CameraPath
+from .flight_plan import (
+    EvaluatedRenderState,
+    FlightSource,
+    evaluate_flight_frame,
+    flight_path_for,
+)
 from .models import RenderRequest
+from .palettes import PaletteInput, palette_cache_key
 from .tonemapping import ToneMapState
 
 ScalarDetail: TypeAlias = bool | float | int | str | None
@@ -71,6 +77,9 @@ class OfflineFrameJob:
     time_seconds_text: str
     camera: CameraState
     request: RenderRequest
+    palette: PaletteInput = "inferno"
+    cycles: float = 1.0
+    render_state: EvaluatedRenderState | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +104,9 @@ class OfflineFrameRenderError(RuntimeError):
 
 
 def build_offline_frame_plan(
-    path: CameraPath, settings: OfflineRenderSettings = OfflineRenderSettings()
+    source: FlightSource, settings: OfflineRenderSettings = OfflineRenderSettings()
 ) -> OfflineFramePlan:
+    path = flight_path_for(source)
     duration = _decimal_fraction(path.duration_text, "camera path duration")
     if duration <= 0:
         raise ValueError("camera path duration must be positive")
@@ -126,13 +136,16 @@ def build_offline_frame_plan(
 
 
 def iter_offline_frame_jobs(
-    path: CameraPath,
+    source: FlightSource,
     request_template: RenderRequest,
     plan: OfflineFramePlan,
     *,
     start_index: int = 0,
     stop_index: int | None = None,
+    palette: PaletteInput = "inferno",
+    cycles: float = 1.0,
 ) -> Iterator[OfflineFrameJob]:
+    path = flight_path_for(source)
     if plan.duration_text != path.duration_text or plan.digits != path.digits:
         raise ValueError("offline frame plan does not match the camera path")
     stop = plan.frame_count if stop_index is None else stop_index
@@ -140,32 +153,43 @@ def iter_offline_frame_jobs(
         raise ValueError("offline frame range is outside the plan")
     for index in range(start_index, stop):
         time_text = plan.time_seconds_text(index)
-        camera = path.evaluate(time_text)
-        request = replace(
+        evaluated = evaluate_flight_frame(
+            source,
+            time_text,
+            request_template,
+            palette=palette,
+            cycles=cycles,
+        )
+        request = evaluated.build_request(
             request_template,
             width=plan.width,
             height=plan.height,
-            viewport=camera.proxy_viewport(digits=path.digits),
-            center_x_text=camera.center_x_text,
-            center_y_text=camera.center_y_text,
-            view_width_text=camera.view_width_text,
         )
-        request.validate()
-        yield OfflineFrameJob(index, time_text, camera, request)
+        yield OfflineFrameJob(
+            index,
+            time_text,
+            evaluated.camera,
+            request,
+            evaluated.render.palette,
+            evaluated.render.cycles,
+            evaluated.render,
+        )
 
 
 def render_offline_frame(
     job: OfflineFrameJob,
     renderer: _FrameRenderer,
     *,
-    palette: str = "inferno",
-    cycles: float = 1.0,
+    palette: PaletteInput | None = None,
+    cycles: float | None = None,
     phase: float = 0.0,
     tone_mapping: str = "auto",
     tone_state: ToneMapState | None = None,
     tone_scene_key: tuple[object, ...] | None = None,
     tone_state_locked: bool = False,
 ) -> OfflineFrame:
+    effective_palette = job.palette if palette is None else palette
+    effective_cycles = job.cycles if cycles is None else cycles
     scene_key = tone_scene_key or (
         "offline-frame",
         job.request.fractal.value,
@@ -173,16 +197,16 @@ def render_offline_frame(
         job.request.render_mode.value,
         job.request.reference_bits,
         job.request.max_iterations,
-        palette,
-        cycles,
+        palette_cache_key(effective_palette),
+        effective_cycles,
         phase,
         tone_mapping,
     )
     try:
         frame = renderer.render_frame(
             job.request,
-            palette,
-            cycles,
+            effective_palette,
+            effective_cycles,
             phase,
             tone_mapping=tone_mapping,
             tone_state=tone_state,
@@ -196,6 +220,7 @@ def render_offline_frame(
             raise ValueError(
                 f"renderer returned RGB shape {rgb.shape}, expected {expected_shape}"
             )
+        details = dict(frame.details)
         return OfflineFrame(
             index=job.index,
             time_seconds_text=job.time_seconds_text,
@@ -203,7 +228,7 @@ def render_offline_frame(
             rgb=rgb.astype(np.uint8, copy=True),
             backend=frame.backend,
             elapsed_seconds=frame.elapsed_seconds,
-            details=_scalar_details(frame.details),
+            details=_scalar_details(details),
         )
     except Exception as exc:
         if isinstance(exc, OfflineFrameRenderError):
@@ -212,14 +237,14 @@ def render_offline_frame(
 
 
 def render_offline_frames(
-    path: CameraPath,
+    source: FlightSource,
     request_template: RenderRequest,
     renderer: _FrameRenderer,
     plan: OfflineFramePlan,
     *,
     start_index: int = 0,
     stop_index: int | None = None,
-    palette: str = "inferno",
+    palette: PaletteInput = "inferno",
     cycles: float = 1.0,
     phase: float = 0.0,
     tone_mapping: str = "auto",
@@ -231,18 +256,18 @@ def render_offline_frames(
     if tone_states is not None and len(tone_states) < stop:
         raise ValueError("tone-state plan is shorter than the requested frame range")
     for job in iter_offline_frame_jobs(
-        path,
+        source,
         request_template,
         plan,
         start_index=start_index,
         stop_index=stop,
+        palette=palette,
+        cycles=cycles,
     ):
         tone_state = None if tone_states is None else tone_states[job.index]
         yield render_offline_frame(
             job,
             renderer,
-            palette=palette,
-            cycles=cycles,
             phase=phase,
             tone_mapping=tone_mapping,
             tone_state=tone_state,

@@ -5,8 +5,9 @@ from enum import Enum
 from typing import Callable, Sequence
 
 from .ffmpeg_mp4 import CancellationCheck, Mp4ExportCancelled
-from .flight_path import CameraPath
+from .flight_plan import FlightSource, flight_plan_fingerprint
 from .models import RenderRequest
+from .palettes import PaletteInput, palette_cache_key
 from .offline_render import OfflineFramePlan, iter_offline_frame_jobs
 from .tonemapping import ToneMapState
 
@@ -46,7 +47,7 @@ ToneAnalysisCallback = Callable[[ToneAnalysisProgress], None]
 def offline_tone_scene_key(
     request: RenderRequest,
     tone_mapping: str,
-    palette: str,
+    palette: PaletteInput,
     cycles: float,
     phase: float,
 ) -> tuple[object, ...]:
@@ -60,7 +61,7 @@ def offline_tone_scene_key(
         request.exponent,
         request.julia_c_real,
         request.julia_c_imag,
-        palette,
+        palette_cache_key(palette),
         cycles,
         phase,
         tone_mapping,
@@ -68,14 +69,14 @@ def offline_tone_scene_key(
 
 
 def analyze_offline_tone_states(
-    path: CameraPath,
+    source: FlightSource,
     request_template: RenderRequest,
     renderer,
     offline_plan: OfflineFramePlan,
     *,
     stop_index: int,
     settings: TemporalToneSettings = TemporalToneSettings(),
-    palette: str = "inferno",
+    palette: PaletteInput = "inferno",
     cycles: float = 1.0,
     phase: float = 0.0,
     tone_mapping: str = "auto",
@@ -94,26 +95,31 @@ def analyze_offline_tone_states(
         width=settings.analysis_width,
         height=settings.analysis_height,
     )
-    scene_key = offline_tone_scene_key(
-        request_template,
-        tone_mapping,
-        palette,
-        cycles,
-        phase,
+    scene_key = (
+        offline_tone_scene_key(
+            request_template,
+            tone_mapping,
+            palette,
+            cycles,
+            phase,
+        ),
+        flight_plan_fingerprint(source),
     )
     states: list[ToneMapState | None] = []
     for job in iter_offline_frame_jobs(
-        path,
+        source,
         request_template,
         analysis_plan,
         stop_index=stop_index,
+        palette=palette,
+        cycles=cycles,
     ):
         if cancellation_requested is not None and cancellation_requested():
             raise Mp4ExportCancelled("MP4 export cancelled during tone analysis")
         frame = renderer.render_frame(
             job.request,
-            palette,
-            cycles,
+            job.palette,
+            job.cycles,
             phase,
             tone_mapping=tone_mapping,
             tone_state=None,

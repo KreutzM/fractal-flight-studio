@@ -8,6 +8,7 @@ from typing import Any
 import numpy as np
 
 from ..models import RenderRequest
+from ..palettes import PaletteInput
 
 
 @dataclass(slots=True)
@@ -43,7 +44,7 @@ class Renderer(ABC):
     def render_frame(
         self,
         request: RenderRequest,
-        palette: str = "inferno",
+        palette: PaletteInput = "inferno",
         cycles: float = 1.0,
         phase: float = 0.0,
         tone_mapping: str = "auto",
