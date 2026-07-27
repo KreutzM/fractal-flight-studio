@@ -12,15 +12,17 @@ from .deep_zoom_targets import DeepZoomTarget, favorite_deep_zoom_targets, load_
 from .export_controller import FlightExportController
 from .export_warning_dialog import FlightExportDialog
 from .flight_path import CameraPath
+from .flight_plan import FlightPlanDefaults, FlightScene, RenderProfile
 from .flight_plan_io import (
     FLIGHT_PLAN_EXTENSION,
-    FlightPlanDocument,
     load_flight_plan,
     save_flight_plan,
     suggested_flight_plan_name,
 )
+from .flight_plan_session import FlightPlanSession
 from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
-from .models import RenderRequest
+from .models import FractalKind, RenderRequest
+from .path_editor import CameraPathDraft
 from .target_browser import DeepZoomTargetBrowser
 from .timeline_editor import CameraPathEditorWindow
 from .renderers import available_renderers, select_renderer
@@ -36,13 +38,137 @@ class FractalStudioApp(BaseFractalStudioApp):
         self.timeline_editor: CameraPathEditorWindow | None = None
         self.export_dialog: FlightExportDialog | None = None
         self.export_controller = FlightExportController()
-        self.camera_path: CameraPath | None = None
-        self.camera_path_file: Path | None = None
-        self.camera_path_name = "Unbenannter Flugplan"
-        self.camera_path_dirty = False
+        self._applying_flight_plan_settings = False
+        self._last_session_document_state: tuple[object, ...] | None = None
         self.deep_zoom_targets_by_name = {target.name: target for target in self.deep_zoom_targets}
         super().__init__(root)
+        self.flight_plan_session = FlightPlanSession.new(
+            self.camera,
+            digits=self._work_digits(),
+            scene=self._current_flight_scene(),
+            render_profile=self._current_render_profile(),
+        )
+        self.flight_plan_session.add_listener(
+            self._on_flight_plan_session_changed,
+            notify=True,
+        )
+        for variable in (
+            self.fractal_var,
+            self.iterations_var,
+            self.reference_bits_var,
+            self.palette_var,
+            self.cycles_var,
+            self.julia_real_var,
+            self.julia_imag_var,
+            self.exponent_var,
+        ):
+            variable.trace_add("write", self._sync_primary_flight_settings)
         self._build_deep_zoom_target_bar()
+
+    @property
+    def camera_path(self) -> CameraPath | None:
+        return self.flight_plan_session.camera_path
+
+    @camera_path.setter
+    def camera_path(self, path: CameraPath | None) -> None:
+        if path is None:
+            self.flight_plan_session.set_camera_draft(
+                CameraPathDraft(digits=self.flight_plan_session.camera_draft.digits)
+            )
+        else:
+            self.flight_plan_session.set_camera_path(path)
+
+    @property
+    def camera_path_file(self) -> Path | None:
+        return self.flight_plan_session.file_path
+
+    @property
+    def camera_path_name(self) -> str:
+        return self.flight_plan_session.name
+
+    @camera_path_name.setter
+    def camera_path_name(self, name: str) -> None:
+        self.flight_plan_session.set_name(name)
+
+    @property
+    def camera_path_dirty(self) -> bool:
+        return self.flight_plan_session.dirty
+
+    def _current_flight_scene(self) -> FlightScene:
+        return FlightScene(
+            FractalKind(self.fractal_var.get()),
+            int(self.exponent_var.get()),
+            repr(float(self.julia_real_var.get())),
+            repr(float(self.julia_imag_var.get())),
+        )
+
+    def _current_render_profile(self) -> RenderProfile:
+        return RenderProfile(
+            max_iterations=int(self.iterations_var.get()),
+            reference_bits=int(self.reference_bits_var.get()),
+            palette=self.palette_var.get(),
+            cycles_text=format(float(self.cycles_var.get()), ".17g"),
+        )
+
+    def _migration_defaults(self) -> FlightPlanDefaults:
+        return FlightPlanDefaults(
+            self._current_flight_scene(),
+            self._current_render_profile(),
+        )
+
+    def _sync_primary_flight_settings(self, *_args) -> None:
+        if self._applying_flight_plan_settings or not hasattr(self, "flight_plan_session"):
+            return
+        try:
+            self.flight_plan_session.sync_primary_settings(
+                self._current_flight_scene(),
+                self._current_render_profile(),
+            )
+        except Exception as exc:
+            self.status_var.set(f"Flugplan-Einstellung ungültig: {exc}")
+
+    def _apply_document_primary_settings(self, document) -> None:
+        profile = document.render_track.first_profile
+        scene = document.scene
+        self._applying_flight_plan_settings = True
+        try:
+            self.fractal_var.set(scene.fractal.value)
+            self.exponent_var.set(scene.exponent)
+            self.julia_real_var.set(float(scene.julia_c_real_text))
+            self.julia_imag_var.set(float(scene.julia_c_imag_text))
+            self.iterations_var.set(profile.max_iterations)
+            self.reference_bits_var.set(profile.reference_bits)
+            self.palette_var.set(profile.palette)
+            self.cycles_var.set(profile.cycles)
+        finally:
+            self._applying_flight_plan_settings = False
+
+    def _on_flight_plan_session_changed(self, session: FlightPlanSession) -> None:
+        state = (
+            session.camera_draft,
+            session.scene,
+            session.render_track,
+            session.name,
+            session.file_path,
+            session.dirty,
+        )
+        if state == self._last_session_document_state:
+            return
+        self._last_session_document_state = state
+        path = session.camera_path
+        marker = " *" if session.dirty else ""
+        if path is None:
+            self.position_var.set(
+                f"Flugplan {session.name}{marker}: Entwurf noch nicht exportierbar.\n"
+                f"{session.validation_error}"
+            )
+        else:
+            self.position_var.set(
+                f"Flugplan {session.name}{marker}: {len(path.keyframes)} Keyframes, "
+                f"Dauer {path.duration_text} s; {len(session.render_track.cues)} Render-Cues."
+            )
+        if self.export_dialog is not None and self.export_dialog.winfo_exists():
+            self.export_dialog.refresh_path_summary()
 
     def _build_deep_zoom_target_bar(self) -> None:
         existing = self.root.winfo_children()
@@ -181,26 +307,11 @@ class FractalStudioApp(BaseFractalStudioApp):
             get_current_camera=lambda: self.camera,
             targets=self.all_deep_zoom_targets,
             on_preview=self._preview_camera_path,
-            on_path_changed=self._store_camera_path,
-            initial_path=self.camera_path,
-            digits=self._work_digits(),
+            session=self.flight_plan_session,
         )
 
-    def _store_camera_path(self, path: CameraPath | None) -> None:
-        if path != self.camera_path:
-            self.camera_path_dirty = True
-        self.camera_path = path
-        if path is not None:
-            marker = " *" if self.camera_path_dirty else ""
-            self.position_var.set(
-                f"Flugplan {self.camera_path_name}{marker}: "
-                f"{len(path.keyframes)} Keyframes, Dauer {path.duration_text} s."
-            )
-        if self.export_dialog is not None and self.export_dialog.winfo_exists():
-            self.export_dialog.refresh_path_summary()
-
     def _confirm_discard_flight_plan_changes(self, action: str) -> bool:
-        if not self.camera_path_dirty:
+        if not self.flight_plan_session.dirty:
             return True
         answer = messagebox.askyesnocancel(
             "Ungespeicherte Änderungen",
@@ -230,33 +341,30 @@ class FractalStudioApp(BaseFractalStudioApp):
 
     def _load_flight_plan_path(self, path: Path) -> bool:
         try:
-            document = load_flight_plan(path)
+            document = load_flight_plan(
+                path,
+                migration_defaults=self._migration_defaults(),
+            )
         except Exception as exc:
             messagebox.showerror("Flugplan öffnen", str(exc), parent=self.root)
             return False
-        self.camera_path = document.path
-        self.camera_path_file = path
-        self.camera_path_name = document.name
-        self.camera_path_dirty = False
-        if self.timeline_editor is not None and self.timeline_editor.winfo_exists():
-            self.timeline_editor.destroy()
-            self.timeline_editor = None
-            self.open_timeline_editor()
+        self._apply_document_primary_settings(document)
+        self.flight_plan_session.set_document(document, file_path=path, dirty=False)
+        migrated = "; Schema 1 wird beim nächsten Speichern auf Schema 2 aktualisiert" if document.source_schema_version == 1 else ""
         self.position_var.set(
             f"Flugplan {document.name} geladen: "
-            f"{len(document.path.keyframes)} Keyframes, Dauer {document.path.duration_text} s."
+            f"{len(document.path.keyframes)} Keyframes, Dauer {document.path.duration_text} s; "
+            f"{len(document.render_track.cues)} Render-Cues{migrated}."
         )
-        if self.export_dialog is not None and self.export_dialog.winfo_exists():
-            self.export_dialog.refresh_path_summary()
         return True
 
     def save_flight_plan(self) -> bool:
-        if self.camera_path_file is None:
+        if self.flight_plan_session.file_path is None:
             return self.save_flight_plan_as()
-        return self._save_flight_plan_path(self.camera_path_file)
+        return self._save_flight_plan_path(self.flight_plan_session.file_path)
 
     def save_flight_plan_as(self) -> bool:
-        if self.camera_path is None:
+        if self.flight_plan_session.camera_path is None:
             messagebox.showerror(
                 "Flugplan speichern",
                 "Der Flugplan muss mindestens zwei gültige Keyframes enthalten.",
@@ -264,9 +372,9 @@ class FractalStudioApp(BaseFractalStudioApp):
             )
             return False
         initial_name = (
-            self.camera_path_file.name
-            if self.camera_path_file is not None
-            else f"{self.camera_path_name}{FLIGHT_PLAN_EXTENSION}"
+            self.flight_plan_session.file_path.name
+            if self.flight_plan_session.file_path is not None
+            else f"{self.flight_plan_session.name}{FLIGHT_PLAN_EXTENSION}"
         )
         selected = filedialog.asksaveasfilename(
             parent=self.root,
@@ -278,11 +386,13 @@ class FractalStudioApp(BaseFractalStudioApp):
         if not selected:
             return False
         path = Path(selected)
-        self.camera_path_name = suggested_flight_plan_name(path)
-        return self._save_flight_plan_path(path)
+        return self._save_flight_plan_path(
+            path,
+            name=suggested_flight_plan_name(path),
+        )
 
-    def _save_flight_plan_path(self, path: Path) -> bool:
-        if self.camera_path is None:
+    def _save_flight_plan_path(self, path: Path, *, name: str | None = None) -> bool:
+        if self.flight_plan_session.camera_path is None:
             messagebox.showerror(
                 "Flugplan speichern",
                 "Der Flugplan muss mindestens zwei gültige Keyframes enthalten.",
@@ -290,16 +400,13 @@ class FractalStudioApp(BaseFractalStudioApp):
             )
             return False
         try:
-            save_flight_plan(
-                path,
-                FlightPlanDocument(self.camera_path_name, self.camera_path),
-            )
+            document = self.flight_plan_session.build_document(name=name)
+            save_flight_plan(path, document)
         except Exception as exc:
             messagebox.showerror("Flugplan speichern", str(exc), parent=self.root)
             return False
-        self.camera_path_file = path
-        self.camera_path_dirty = False
-        self.position_var.set(f"Flugplan {self.camera_path_name} gespeichert: {path}")
+        self.flight_plan_session.mark_saved(path, name=document.name)
+        self.position_var.set(f"Flugplan {document.name} gespeichert: {path}")
         return True
 
     def open_export_dialog(self) -> None:

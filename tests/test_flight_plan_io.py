@@ -12,9 +12,20 @@ from fractal_flight_studio.flight_path import (
     Easing,
     FlightKeyframe,
 )
+from fractal_flight_studio.flight_plan import (
+    FlightPlanDefaults,
+    FlightPlanDocument,
+    FlightScene,
+    PaletteTransition,
+    RenderCue,
+    RenderProfile,
+    RenderTrack,
+)
 from fractal_flight_studio.flight_plan_io import (
     FLIGHT_PLAN_EXTENSION,
-    FlightPlanDocument,
+    FLIGHT_PLAN_FORMAT,
+    FLIGHT_PLAN_SCHEMA_VERSION,
+    LEGACY_FLIGHT_PLAN_FORMAT,
     FlightPlanFormatError,
     deserialize_flight_plan,
     load_flight_plan,
@@ -22,28 +33,46 @@ from fractal_flight_studio.flight_plan_io import (
     serialize_flight_plan,
     suggested_flight_plan_name,
 )
+from fractal_flight_studio.models import FractalKind
 
 
 def _document() -> FlightPlanDocument:
+    path = CameraPath(
+        (
+            FlightKeyframe(
+                "0",
+                CameraState("-0.5", "0", "4"),
+                Easing.SMOOTHERSTEP,
+                CenterInterpolation.FOCUS,
+            ),
+            FlightKeyframe(
+                "2.5000000000000000001",
+                CameraState(
+                    "-0.743643887037158704752191506114774",
+                    "0.131825904205311970493132056385139",
+                    "1e-420",
+                ),
+                Easing.LINEAR,
+                CenterInterpolation.LINEAR,
+            ),
+        ),
+        digits=180,
+    )
     return FlightPlanDocument(
         name="Seahorse Δ",
-        path=CameraPath(
+        path=path,
+        scene=FlightScene(FractalKind.MANDELBROT, 2, "-0.8", "0.156"),
+        render_track=RenderTrack(
             (
-                FlightKeyframe(
+                RenderCue(
                     "0",
-                    CameraState("-0.5", "0", "4"),
-                    Easing.SMOOTHERSTEP,
-                    CenterInterpolation.FOCUS,
+                    RenderProfile(800, 256, "inferno", "1.25"),
+                    PaletteTransition.HOLD,
                 ),
-                FlightKeyframe(
-                    "2.5000000000000000001",
-                    CameraState(
-                        "-0.743643887037158704752191506114774",
-                        "0.131825904205311970493132056385139",
-                        "1e-420",
-                    ),
-                    Easing.LINEAR,
-                    CenterInterpolation.LINEAR,
+                RenderCue(
+                    "1.25",
+                    RenderProfile(3000, 768, "ocean", "2.5"),
+                    PaletteTransition.BLEND,
                 ),
             ),
             digits=180,
@@ -51,17 +80,32 @@ def _document() -> FlightPlanDocument:
     )
 
 
-def test_round_trip_preserves_exact_text_and_segment_modes(tmp_path: Path) -> None:
+def _legacy_payload() -> dict[str, object]:
+    current = json.loads(serialize_flight_plan(_document()))
+    return {
+        "format": LEGACY_FLIGHT_PLAN_FORMAT,
+        "schema_version": 1,
+        "name": current["name"],
+        "digits": current["digits"],
+        "keyframes": current["camera_keyframes"],
+    }
+
+
+def test_round_trip_preserves_exact_camera_scene_and_render_timeline(tmp_path: Path) -> None:
     target = tmp_path / f"seahorse{FLIGHT_PLAN_EXTENSION}"
 
     save_flight_plan(target, _document())
     loaded = load_flight_plan(target)
 
     assert loaded == _document()
+    assert loaded.source_schema_version == FLIGHT_PLAN_SCHEMA_VERSION
     assert loaded.path.keyframes[1].camera.center_x_text.endswith("4774")
     assert loaded.path.keyframes[1].camera.view_width_text == "1e-420"
     assert loaded.path.keyframes[0].center_interpolation is CenterInterpolation.FOCUS
-    assert loaded.path.digits == 180
+    assert loaded.scene.fractal is FractalKind.MANDELBROT
+    assert loaded.render_track.cues[1].profile.max_iterations == 3000
+    assert loaded.render_track.cues[1].palette_transition is PaletteTransition.BLEND
+    assert loaded.path.digits == loaded.render_track.digits == 180
 
 
 def test_serialization_is_deterministic_utf8_and_uses_string_numbers() -> None:
@@ -72,8 +116,12 @@ def test_serialization_is_deterministic_utf8_and_uses_string_numbers() -> None:
     assert first == second
     assert first.endswith("\n") and not first.endswith("\n\n")
     assert "Seahorse Δ" in first
-    assert value["keyframes"][1]["center_x"].endswith("4774")
-    assert isinstance(value["keyframes"][1]["view_width"], str)
+    assert value["format"] == FLIGHT_PLAN_FORMAT
+    assert value["schema_version"] == 2
+    assert value["camera_keyframes"][1]["center_x"].endswith("4774")
+    assert isinstance(value["camera_keyframes"][1]["view_width"], str)
+    assert isinstance(value["scene"]["julia_c_real"], str)
+    assert isinstance(value["render_cues"][1]["cycles"], str)
 
 
 @pytest.mark.parametrize(
@@ -84,14 +132,38 @@ def test_serialization_is_deterministic_utf8_and_uses_string_numbers() -> None:
         (lambda value: value.update(digits=True), "digits must be an integer"),
         (lambda value: value.update(extra=True), "unexpected 'extra'"),
         (lambda value: value.pop("name"), "missing 'name'"),
-        (lambda value: value.update(keyframes=[]), "at least two keyframes"),
         (
-            lambda value: value["keyframes"][1].update(view_width=1e-20),
+            lambda value: value.update(camera_keyframes=[]),
+            "at least two camera keyframes",
+        ),
+        (
+            lambda value: value["camera_keyframes"][1].update(view_width=1e-20),
             "view_width must be a string",
         ),
         (
-            lambda value: value["keyframes"][0].update(easing="bounce"),
+            lambda value: value["camera_keyframes"][0].update(easing="bounce"),
             "'bounce' is not a valid Easing",
+        ),
+        (
+            lambda value: value["scene"].update(exponent=True),
+            "scene.exponent must be an integer",
+        ),
+        (lambda value: value.update(render_cues=[]), "at least one render cue"),
+        (
+            lambda value: value["render_cues"][0].update(max_iterations="800"),
+            "max_iterations must be an integer",
+        ),
+        (
+            lambda value: value["render_cues"][0].update(palette="unknown"),
+            "unknown render palette",
+        ),
+        (
+            lambda value: value["render_cues"][0].update(cycles=1.0),
+            "cycles must be a string",
+        ),
+        (
+            lambda value: value["render_cues"][1].update(palette_transition="wipe"),
+            "'wipe' is not a valid PaletteTransition",
         ),
     ],
 )
@@ -103,25 +175,64 @@ def test_schema_validation_rejects_invalid_documents(mutation, message: str) -> 
         deserialize_flight_plan(json.dumps(value))
 
 
+def test_schema_one_migrates_with_caller_defaults_and_resaves_as_schema_two() -> None:
+    defaults = FlightPlanDefaults(
+        FlightScene(FractalKind.MULTIBROT, 4, "-0.7", "0.2"),
+        RenderProfile(2200, 640, "ember", "1.75"),
+    )
+
+    migrated = deserialize_flight_plan(
+        json.dumps(_legacy_payload()),
+        source="legacy.json",
+        migration_defaults=defaults,
+    )
+
+    assert migrated.source_schema_version == 1
+    assert migrated.scene == defaults.scene
+    assert migrated.render_track.first_profile == defaults.render_profile
+    assert migrated.render_track.cues[0].time_seconds_text == "0"
+    current = json.loads(serialize_flight_plan(migrated))
+    assert current["schema_version"] == 2
+    assert current["format"] == FLIGHT_PLAN_FORMAT
+    assert "camera_keyframes" in current and "render_cues" in current
+    assert "keyframes" not in current
+
+
+def test_legacy_format_is_required_for_schema_one() -> None:
+    value = _legacy_payload()
+    value["format"] = FLIGHT_PLAN_FORMAT
+
+    with pytest.raises(FlightPlanFormatError, match="for schema 1"):
+        deserialize_flight_plan(json.dumps(value))
+
+
 def test_duplicate_json_members_and_nonstandard_constants_are_rejected() -> None:
     with pytest.raises(FlightPlanFormatError, match="duplicate JSON member 'name'"):
         deserialize_flight_plan(
-            '{"schema_version":1,"format":"x","name":"x","name":"y",'
-            '"digits":80,"keyframes":[]}'
+            '{"schema_version":2,"format":"x","name":"x","name":"y",'
+            '"digits":80,"scene":{},"camera_keyframes":[],"render_cues":[]}'
         )
 
     with pytest.raises(FlightPlanFormatError, match="invalid JSON constant"):
         deserialize_flight_plan(
             '{"schema_version":NaN,"format":"x","name":"x",'
-            '"digits":80,"keyframes":[]}'
+            '"digits":80,"scene":{},"camera_keyframes":[],"render_cues":[]}'
         )
 
 
 def test_invalid_camera_path_is_reported_with_source_context() -> None:
     value = json.loads(serialize_flight_plan(_document()))
-    value["keyframes"][0]["time_seconds"] = "1"
+    value["camera_keyframes"][0]["time_seconds"] = "1"
 
     with pytest.raises(FlightPlanFormatError, match="plan.json: invalid camera path"):
+        deserialize_flight_plan(json.dumps(value), source="plan.json")
+
+
+def test_render_cue_cannot_extend_beyond_camera_path() -> None:
+    value = json.loads(serialize_flight_plan(_document()))
+    value["render_cues"][1]["time_seconds"] = "3"
+
+    with pytest.raises(FlightPlanFormatError, match="must not extend beyond"):
         deserialize_flight_plan(json.dumps(value), source="plan.json")
 
 

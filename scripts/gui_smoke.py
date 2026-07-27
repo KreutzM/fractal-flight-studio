@@ -13,11 +13,14 @@ from fractal_flight_studio.flight_path import (
     CenterInterpolation,
     FlightKeyframe,
 )
+from fractal_flight_studio.flight_plan_io import FLIGHT_PLAN_SCHEMA_VERSION, load_flight_plan
 
 
 def main() -> int:
     root = tk.Tk()
     app = FractalStudioApp(root)
+    assert app.flight_plan_session.render_track.first_profile.palette == "inferno"
+    assert app.flight_plan_session.scene.fractal.value == "mandelbrot"
     assert len(app.deep_zoom_targets) == 10
     assert app.deep_zoom_target_var.get() == app.deep_zoom_targets[0].name
     app.set_catalog_flight_target()
@@ -65,6 +68,9 @@ def main() -> int:
         app.camera_path_name = "GUI smoke"
         assert app._save_flight_plan_path(plan_path)
         assert plan_path.exists()
+        saved = load_flight_plan(plan_path)
+        assert saved.source_schema_version == FLIGHT_PLAN_SCHEMA_VERSION
+        assert saved.render_track.first_profile.palette == app.palette_var.get()
         assert not app.camera_path_dirty
         timeline._draft = timeline.draft.remove_keyframe(1)
         timeline._refresh_tree()
@@ -80,11 +86,14 @@ def main() -> int:
     timeline.destroy()
     root.update_idletasks()
 
-    app.camera_path = CameraPath(
-        (
-            FlightKeyframe("0", CameraState("-0.5", "0", "3.5")),
-            FlightKeyframe("2", CameraState("-0.75", "0.1", "0.1")),
-        )
+    app.flight_plan_session.set_camera_path(
+        CameraPath(
+            (
+                FlightKeyframe("0", CameraState("-0.5", "0", "3.5")),
+                FlightKeyframe("2", CameraState("-0.75", "0.1", "0.1")),
+            )
+        ),
+        mark_dirty=False,
     )
     app.open_export_dialog()
     export_dialog = app.export_dialog

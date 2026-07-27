@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import os
 from pathlib import Path
@@ -8,18 +7,25 @@ import tempfile
 from typing import Any, Mapping, Sequence
 
 from .camera import CameraState
-from .flight_path import (
-    CameraPath,
-    CenterInterpolation,
-    Easing,
-    FlightKeyframe,
+from .flight_path import CameraPath, CenterInterpolation, Easing, FlightKeyframe
+from .flight_plan import (
+    FlightPlanDefaults,
+    FlightPlanDocument,
+    FlightScene,
+    PaletteTransition,
+    RenderCue,
+    RenderProfile,
+    RenderTrack,
 )
+from .models import FractalKind
 
-FLIGHT_PLAN_FORMAT = "fractal-flight-studio.camera-path"
-FLIGHT_PLAN_SCHEMA_VERSION = 1
+FLIGHT_PLAN_FORMAT = "fractal-flight-studio.flight-plan"
+LEGACY_FLIGHT_PLAN_FORMAT = "fractal-flight-studio.camera-path"
+FLIGHT_PLAN_SCHEMA_VERSION = 2
 FLIGHT_PLAN_EXTENSION = ".fractal-flight.json"
 MAX_FLIGHT_PLAN_BYTES = 10 * 1024 * 1024
 MAX_FLIGHT_PLAN_KEYFRAMES = 100_000
+MAX_FLIGHT_PLAN_RENDER_CUES = 100_000
 _MAX_DIGITS = 16_384
 
 
@@ -31,32 +37,21 @@ class FlightPlanFormatError(FlightPlanError):
     """Raised when a flight-plan document violates its JSON schema."""
 
 
-@dataclass(frozen=True, slots=True)
-class FlightPlanDocument:
-    """Portable camera path plus user-facing document metadata."""
-
-    name: str
-    path: CameraPath
-
-    def __post_init__(self) -> None:
-        normalized = _validated_name(self.name)
-        object.__setattr__(self, "name", normalized)
-        _validated_digits(self.path.digits)
-        if len(self.path.keyframes) > MAX_FLIGHT_PLAN_KEYFRAMES:
-            raise FlightPlanFormatError(
-                f"flight plan exceeds {MAX_FLIGHT_PLAN_KEYFRAMES} keyframes"
-            )
-
-
 def flight_plan_to_dict(document: FlightPlanDocument) -> dict[str, Any]:
-    """Convert a document to the versioned, lossless JSON representation."""
+    """Convert a document to the current versioned, lossless JSON representation."""
 
     return {
         "format": FLIGHT_PLAN_FORMAT,
         "schema_version": FLIGHT_PLAN_SCHEMA_VERSION,
         "name": document.name,
         "digits": document.path.digits,
-        "keyframes": [
+        "scene": {
+            "fractal": document.scene.fractal.value,
+            "exponent": document.scene.exponent,
+            "julia_c_real": document.scene.julia_c_real_text,
+            "julia_c_imag": document.scene.julia_c_imag_text,
+        },
+        "camera_keyframes": [
             {
                 "time_seconds": frame.time_seconds_text,
                 "center_x": frame.camera.center_x_text,
@@ -66,6 +61,17 @@ def flight_plan_to_dict(document: FlightPlanDocument) -> dict[str, Any]:
                 "center_interpolation": frame.center_interpolation.value,
             }
             for frame in document.path.keyframes
+        ],
+        "render_cues": [
+            {
+                "time_seconds": cue.time_seconds_text,
+                "max_iterations": cue.profile.max_iterations,
+                "reference_bits": cue.profile.reference_bits,
+                "palette": cue.profile.palette,
+                "cycles": cue.profile.cycles_text,
+                "palette_transition": cue.palette_transition.value,
+            }
+            for cue in document.render_track.cues
         ],
     }
 
@@ -85,8 +91,9 @@ def deserialize_flight_plan(
     text: str,
     *,
     source: str = "<memory>",
+    migration_defaults: FlightPlanDefaults = FlightPlanDefaults(),
 ) -> FlightPlanDocument:
-    """Parse and strictly validate one versioned flight-plan document."""
+    """Parse, migrate and strictly validate one versioned flight-plan document."""
 
     if not isinstance(text, str):
         raise TypeError("flight-plan JSON input must be text")
@@ -111,16 +118,22 @@ def deserialize_flight_plan(
     version = root.get("schema_version")
     if isinstance(version, bool) or not isinstance(version, int):
         raise FlightPlanFormatError(f"{source}: schema_version must be an integer")
-    if version != FLIGHT_PLAN_SCHEMA_VERSION:
-        raise FlightPlanFormatError(
-            f"{source}: unsupported schema_version {version}; "
-            f"supported version is {FLIGHT_PLAN_SCHEMA_VERSION}"
-        )
-    return _deserialize_v1(root, source=source)
+    if version == 1:
+        return _deserialize_v1(root, source=source, defaults=migration_defaults)
+    if version == FLIGHT_PLAN_SCHEMA_VERSION:
+        return _deserialize_v2(root, source=source)
+    raise FlightPlanFormatError(
+        f"{source}: unsupported schema_version {version}; supported versions are 1 and "
+        f"{FLIGHT_PLAN_SCHEMA_VERSION}"
+    )
 
 
-def load_flight_plan(path: str | os.PathLike[str]) -> FlightPlanDocument:
-    """Load a UTF-8 flight-plan file with a bounded input size."""
+def load_flight_plan(
+    path: str | os.PathLike[str],
+    *,
+    migration_defaults: FlightPlanDefaults = FlightPlanDefaults(),
+) -> FlightPlanDocument:
+    """Load a bounded UTF-8 flight plan and migrate legacy schema 1 in memory."""
 
     source_path = Path(path)
     with source_path.open("rb") as handle:
@@ -133,7 +146,11 @@ def load_flight_plan(path: str | os.PathLike[str]) -> FlightPlanDocument:
         text = payload.decode("utf-8")
     except UnicodeDecodeError as exc:
         raise FlightPlanFormatError(f"{source_path}: document is not valid UTF-8") from exc
-    return deserialize_flight_plan(text, source=str(source_path))
+    return deserialize_flight_plan(
+        text,
+        source=str(source_path),
+        migration_defaults=migration_defaults,
+    )
 
 
 def save_flight_plan(
@@ -188,27 +205,112 @@ def _deserialize_v1(
     root: Mapping[str, Any],
     *,
     source: str,
+    defaults: FlightPlanDefaults,
 ) -> FlightPlanDocument:
     _require_exact_keys(
         root,
         {"format", "schema_version", "name", "digits", "keyframes"},
         source,
     )
-    if root["format"] != FLIGHT_PLAN_FORMAT:
+    if root["format"] != LEGACY_FLIGHT_PLAN_FORMAT:
         raise FlightPlanFormatError(
-            f"{source}: format must be {FLIGHT_PLAN_FORMAT!r}"
+            f"{source}: format must be {LEGACY_FLIGHT_PLAN_FORMAT!r} for schema 1"
         )
     name = _require_string(root["name"], f"{source}: name")
     digits = _validated_digits(root["digits"], source=source)
+    path = _deserialize_camera_track(root["keyframes"], digits=digits, source=source)
+    try:
+        return FlightPlanDocument(
+            name,
+            path,
+            defaults.scene,
+            RenderTrack.default(defaults.render_profile, digits=digits),
+            source_schema_version=1,
+        )
+    except ValueError as exc:
+        raise FlightPlanFormatError(f"{source}: invalid migrated flight plan: {exc}") from exc
 
-    keyframe_values = root["keyframes"]
-    if not isinstance(keyframe_values, list):
-        raise FlightPlanFormatError(f"{source}: keyframes must be an array")
-    if len(keyframe_values) < 2:
-        raise FlightPlanFormatError(f"{source}: at least two keyframes are required")
-    if len(keyframe_values) > MAX_FLIGHT_PLAN_KEYFRAMES:
+
+def _deserialize_v2(
+    root: Mapping[str, Any],
+    *,
+    source: str,
+) -> FlightPlanDocument:
+    _require_exact_keys(
+        root,
+        {
+            "format",
+            "schema_version",
+            "name",
+            "digits",
+            "scene",
+            "camera_keyframes",
+            "render_cues",
+        },
+        source,
+    )
+    if root["format"] != FLIGHT_PLAN_FORMAT:
+        raise FlightPlanFormatError(f"{source}: format must be {FLIGHT_PLAN_FORMAT!r}")
+    name = _require_string(root["name"], f"{source}: name")
+    digits = _validated_digits(root["digits"], source=source)
+    scene = _deserialize_scene(root["scene"], source=source)
+    path = _deserialize_camera_track(
+        root["camera_keyframes"],
+        digits=digits,
+        source=source,
+    )
+    render_track = _deserialize_render_track(
+        root["render_cues"],
+        digits=digits,
+        source=source,
+    )
+    try:
+        return FlightPlanDocument(
+            name,
+            path,
+            scene,
+            render_track,
+            source_schema_version=2,
+        )
+    except ValueError as exc:
+        raise FlightPlanFormatError(f"{source}: invalid flight plan: {exc}") from exc
+
+
+def _deserialize_scene(value: Any, *, source: str) -> FlightScene:
+    label = f"{source}: scene"
+    scene = _require_object(value, label)
+    _require_exact_keys(
+        scene,
+        {"fractal", "exponent", "julia_c_real", "julia_c_imag"},
+        label,
+    )
+    exponent = scene["exponent"]
+    if isinstance(exponent, bool) or not isinstance(exponent, int):
+        raise FlightPlanFormatError(f"{label}.exponent must be an integer")
+    try:
+        return FlightScene(
+            FractalKind(_require_string(scene["fractal"], f"{label}.fractal")),
+            exponent,
+            _require_string(scene["julia_c_real"], f"{label}.julia_c_real"),
+            _require_string(scene["julia_c_imag"], f"{label}.julia_c_imag"),
+        )
+    except ValueError as exc:
+        raise FlightPlanFormatError(f"{label}: {exc}") from exc
+
+
+def _deserialize_camera_track(
+    value: Any,
+    *,
+    digits: int,
+    source: str,
+) -> CameraPath:
+    if not isinstance(value, list):
+        raise FlightPlanFormatError(f"{source}: camera keyframes must be an array")
+    if len(value) < 2:
+        raise FlightPlanFormatError(f"{source}: at least two camera keyframes are required")
+    if len(value) > MAX_FLIGHT_PLAN_KEYFRAMES:
         raise FlightPlanFormatError(
-            f"{source}: keyframes exceeds {MAX_FLIGHT_PLAN_KEYFRAMES} entries"
+            f"{source}: camera keyframes exceed {MAX_FLIGHT_PLAN_KEYFRAMES} entries"
         )
 
     frames: list[FlightKeyframe] = []
@@ -220,8 +322,8 @@ def _deserialize_v1(
         "easing",
         "center_interpolation",
     }
-    for index, item in enumerate(keyframe_values):
-        label = f"{source}: keyframes[{index}]"
+    for index, item in enumerate(value):
+        label = f"{source}: camera_keyframes[{index}]"
         frame_value = _require_object(item, label)
         _require_exact_keys(frame_value, expected, label)
         try:
@@ -245,21 +347,69 @@ def _deserialize_v1(
         frames.append(frame)
 
     try:
-        path = CameraPath(tuple(frames), digits=digits)
+        return CameraPath(tuple(frames), digits=digits)
     except ValueError as exc:
         raise FlightPlanFormatError(f"{source}: invalid camera path: {exc}") from exc
-    return FlightPlanDocument(name=name, path=path)
 
 
-def _validated_name(value: Any) -> str:
-    name = _require_string(value, "flight-plan name").strip()
-    if not name:
-        raise FlightPlanFormatError("flight-plan name must not be empty")
-    if len(name) > 200:
-        raise FlightPlanFormatError("flight-plan name must not exceed 200 characters")
-    if any(ord(character) < 32 for character in name):
-        raise FlightPlanFormatError("flight-plan name must not contain control characters")
-    return name
+def _deserialize_render_track(
+    value: Any,
+    *,
+    digits: int,
+    source: str,
+) -> RenderTrack:
+    if not isinstance(value, list):
+        raise FlightPlanFormatError(f"{source}: render_cues must be an array")
+    if not value:
+        raise FlightPlanFormatError(f"{source}: at least one render cue is required")
+    if len(value) > MAX_FLIGHT_PLAN_RENDER_CUES:
+        raise FlightPlanFormatError(
+            f"{source}: render_cues exceed {MAX_FLIGHT_PLAN_RENDER_CUES} entries"
+        )
+
+    expected = {
+        "time_seconds",
+        "max_iterations",
+        "reference_bits",
+        "palette",
+        "cycles",
+        "palette_transition",
+    }
+    cues: list[RenderCue] = []
+    for index, item in enumerate(value):
+        label = f"{source}: render_cues[{index}]"
+        cue_value = _require_object(item, label)
+        _require_exact_keys(cue_value, expected, label)
+        max_iterations = cue_value["max_iterations"]
+        reference_bits = cue_value["reference_bits"]
+        if isinstance(max_iterations, bool) or not isinstance(max_iterations, int):
+            raise FlightPlanFormatError(f"{label}.max_iterations must be an integer")
+        if isinstance(reference_bits, bool) or not isinstance(reference_bits, int):
+            raise FlightPlanFormatError(f"{label}.reference_bits must be an integer")
+        try:
+            profile = RenderProfile(
+                max_iterations=max_iterations,
+                reference_bits=reference_bits,
+                palette=_require_string(cue_value["palette"], f"{label}.palette"),
+                cycles_text=_require_string(cue_value["cycles"], f"{label}.cycles"),
+            )
+            cue = RenderCue(
+                _require_string(cue_value["time_seconds"], f"{label}.time_seconds"),
+                profile,
+                PaletteTransition(
+                    _require_string(
+                        cue_value["palette_transition"],
+                        f"{label}.palette_transition",
+                    )
+                ),
+            )
+        except ValueError as exc:
+            raise FlightPlanFormatError(f"{label}: {exc}") from exc
+        cues.append(cue)
+    try:
+        return RenderTrack(tuple(cues), digits=digits)
+    except ValueError as exc:
+        raise FlightPlanFormatError(f"{source}: invalid render track: {exc}") from exc
 
 
 def _validated_digits(value: Any, *, source: str | None = None) -> int:

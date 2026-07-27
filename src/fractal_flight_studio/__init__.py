@@ -28,11 +28,19 @@ from .flight_path import (
     Easing,
     FlightKeyframe,
 )
+from .flight_plan import (
+    FlightPlanDefaults,
+    FlightPlanDocument,
+    FlightScene,
+    PaletteTransition,
+    RenderCue,
+    RenderProfile,
+    RenderTrack,
+)
 from .flight_plan_io import (
     FLIGHT_PLAN_EXTENSION,
     FLIGHT_PLAN_FORMAT,
     FLIGHT_PLAN_SCHEMA_VERSION,
-    FlightPlanDocument,
     FlightPlanError,
     FlightPlanFormatError,
     deserialize_flight_plan,
@@ -42,6 +50,7 @@ from .flight_plan_io import (
     serialize_flight_plan,
     suggested_flight_plan_name,
 )
+from .flight_plan_session import FlightPlanSession
 from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
 from .mp4_export import build_mp4_export_plan, export_path_to_mp4
 from .path_editor import CameraPathDraft
@@ -89,9 +98,12 @@ __all__ = [
     "FlightExportJobKind",
     "FlightExportProgress",
     "FlightKeyframe",
+    "FlightPlanDefaults",
     "FlightPlanDocument",
     "FlightPlanError",
     "FlightPlanFormatError",
+    "FlightPlanSession",
+    "FlightScene",
     "FLIGHT_PLAN_EXTENSION",
     "FLIGHT_PLAN_FORMAT",
     "FLIGHT_PLAN_SCHEMA_VERSION",
@@ -108,6 +120,7 @@ __all__ = [
     "OfflineFrameRenderError",
     "OfflineRenderSettings",
     "Precision",
+    "PaletteTransition",
     "PreflightCancelled",
     "PreflightIssue",
     "PreflightIssueKind",
@@ -116,7 +129,10 @@ __all__ = [
     "PreflightSample",
     "PreflightSettings",
     "RenderMode",
+    "RenderCue",
+    "RenderProfile",
     "RenderRequest",
+    "RenderTrack",
     "TemporalToneSettings",
     "ToneAnalysisProgress",
     "ToneStability",
