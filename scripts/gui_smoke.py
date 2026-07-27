@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from tempfile import TemporaryDirectory
 import tkinter as tk
 
 from fractal_flight_studio.camera import CameraState
@@ -50,6 +52,31 @@ def main() -> int:
         timeline.draft.keyframes[0].center_interpolation
         is CenterInterpolation.FOCUS
     )
+    timeline._draft = timeline.draft.add_keyframe(
+        "2",
+        CameraState("-0.75", "0.1", "0.01"),
+        center_interpolation=CenterInterpolation.FOCUS,
+    )
+    timeline._refresh_tree(select_time="2")
+    timeline._publish_path_state()
+    assert app.camera_path_dirty
+    with TemporaryDirectory() as directory:
+        plan_path = Path(directory) / "smoke.fractal-flight.json"
+        app.camera_path_name = "GUI smoke"
+        assert app._save_flight_plan_path(plan_path)
+        assert plan_path.exists()
+        assert not app.camera_path_dirty
+        timeline._draft = timeline.draft.remove_keyframe(1)
+        timeline._refresh_tree()
+        timeline._publish_path_state()
+        assert app.camera_path_dirty
+        assert app._load_flight_plan_path(plan_path)
+        timeline = app.timeline_editor
+        assert timeline is not None
+        assert len(timeline.draft.keyframes) == 2
+        assert app.camera_path_file == plan_path
+        assert app.camera_path_name == "GUI smoke"
+        assert not app.camera_path_dirty
     timeline.destroy()
     root.update_idletasks()
 

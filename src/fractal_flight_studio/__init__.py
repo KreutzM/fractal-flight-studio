@@ -28,6 +28,20 @@ from .flight_path import (
     Easing,
     FlightKeyframe,
 )
+from .flight_plan_io import (
+    FLIGHT_PLAN_EXTENSION,
+    FLIGHT_PLAN_FORMAT,
+    FLIGHT_PLAN_SCHEMA_VERSION,
+    FlightPlanDocument,
+    FlightPlanError,
+    FlightPlanFormatError,
+    deserialize_flight_plan,
+    flight_plan_to_dict,
+    load_flight_plan,
+    save_flight_plan,
+    serialize_flight_plan,
+    suggested_flight_plan_name,
+)
 from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
 from .mp4_export import build_mp4_export_plan, export_path_to_mp4
 from .path_editor import CameraPathDraft
@@ -75,6 +89,12 @@ __all__ = [
     "FlightExportJobKind",
     "FlightExportProgress",
     "FlightKeyframe",
+    "FlightPlanDocument",
+    "FlightPlanError",
+    "FlightPlanFormatError",
+    "FLIGHT_PLAN_EXTENSION",
+    "FLIGHT_PLAN_FORMAT",
+    "FLIGHT_PLAN_SCHEMA_VERSION",
     "FractalKind",
     "Mp4ExportCancelled",
     "Mp4ExportError",
@@ -106,14 +126,20 @@ __all__ = [
     "build_offline_frame_plan",
     "build_preflight_plan",
     "encode_mp4_frames",
+    "deserialize_flight_plan",
     "export_path_to_mp4",
+    "flight_plan_to_dict",
     "flight_export_fingerprint",
     "iter_offline_frame_jobs",
     "parse_frame_rate",
     "probe_ffmpeg",
+    "load_flight_plan",
     "render_offline_frame",
     "render_offline_frames",
     "run_path_preflight",
+    "save_flight_plan",
+    "serialize_flight_plan",
     "stabilize_tone_states",
+    "suggested_flight_plan_name",
 ]
 __version__ = "0.9.0"

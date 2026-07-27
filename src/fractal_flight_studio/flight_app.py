@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
+from pathlib import Path
 import tkinter as tk
-from tkinter import ttk
+from tkinter import filedialog, messagebox, ttk
 
 from .app import FractalStudioApp as BaseFractalStudioApp
 from .camera import CameraState
@@ -11,6 +12,13 @@ from .deep_zoom_targets import DeepZoomTarget, favorite_deep_zoom_targets, load_
 from .export_controller import FlightExportController
 from .export_warning_dialog import FlightExportDialog
 from .flight_path import CameraPath
+from .flight_plan_io import (
+    FLIGHT_PLAN_EXTENSION,
+    FlightPlanDocument,
+    load_flight_plan,
+    save_flight_plan,
+    suggested_flight_plan_name,
+)
 from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
 from .models import RenderRequest
 from .target_browser import DeepZoomTargetBrowser
@@ -29,6 +37,9 @@ class FractalStudioApp(BaseFractalStudioApp):
         self.export_dialog: FlightExportDialog | None = None
         self.export_controller = FlightExportController()
         self.camera_path: CameraPath | None = None
+        self.camera_path_file: Path | None = None
+        self.camera_path_name = "Unbenannter Flugplan"
+        self.camera_path_dirty = False
         self.deep_zoom_targets_by_name = {target.name: target for target in self.deep_zoom_targets}
         super().__init__(root)
         self._build_deep_zoom_target_bar()
@@ -64,6 +75,15 @@ class FractalStudioApp(BaseFractalStudioApp):
             side=tk.LEFT, padx=(6, 0)
         )
         ttk.Button(bar, text="Flugplan …", command=self.open_timeline_editor).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
+        ttk.Button(bar, text="Öffnen …", command=self.open_flight_plan).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
+        ttk.Button(bar, text="Speichern", command=self.save_flight_plan).pack(
+            side=tk.LEFT, padx=(6, 0)
+        )
+        ttk.Button(bar, text="Speichern unter …", command=self.save_flight_plan_as).pack(
             side=tk.LEFT, padx=(6, 0)
         )
         ttk.Button(bar, text="Video exportieren …", command=self.open_export_dialog).pack(
@@ -167,13 +187,120 @@ class FractalStudioApp(BaseFractalStudioApp):
         )
 
     def _store_camera_path(self, path: CameraPath | None) -> None:
+        if path != self.camera_path:
+            self.camera_path_dirty = True
         self.camera_path = path
         if path is not None:
+            marker = " *" if self.camera_path_dirty else ""
             self.position_var.set(
-                f"Flugplan bereit: {len(path.keyframes)} Keyframes, Dauer {path.duration_text} s."
+                f"Flugplan {self.camera_path_name}{marker}: "
+                f"{len(path.keyframes)} Keyframes, Dauer {path.duration_text} s."
             )
         if self.export_dialog is not None and self.export_dialog.winfo_exists():
             self.export_dialog.refresh_path_summary()
+
+    def _confirm_discard_flight_plan_changes(self, action: str) -> bool:
+        if not self.camera_path_dirty:
+            return True
+        answer = messagebox.askyesnocancel(
+            "Ungespeicherte Änderungen",
+            f"Der Flugplan wurde geändert. Vor {action} speichern?",
+            parent=self.root,
+        )
+        if answer is None:
+            return False
+        if answer:
+            return self.save_flight_plan()
+        return True
+
+    def open_flight_plan(self) -> None:
+        if not self._confirm_discard_flight_plan_changes("dem Öffnen"):
+            return
+        selected = filedialog.askopenfilename(
+            parent=self.root,
+            title="Flugplan öffnen",
+            filetypes=(
+                ("Fractal-Flight-Flugplan", f"*{FLIGHT_PLAN_EXTENSION}"),
+                ("JSON-Dateien", "*.json"),
+                ("Alle Dateien", "*.*"),
+            ),
+        )
+        if selected:
+            self._load_flight_plan_path(Path(selected))
+
+    def _load_flight_plan_path(self, path: Path) -> bool:
+        try:
+            document = load_flight_plan(path)
+        except Exception as exc:
+            messagebox.showerror("Flugplan öffnen", str(exc), parent=self.root)
+            return False
+        self.camera_path = document.path
+        self.camera_path_file = path
+        self.camera_path_name = document.name
+        self.camera_path_dirty = False
+        if self.timeline_editor is not None and self.timeline_editor.winfo_exists():
+            self.timeline_editor.destroy()
+            self.timeline_editor = None
+            self.open_timeline_editor()
+        self.position_var.set(
+            f"Flugplan {document.name} geladen: "
+            f"{len(document.path.keyframes)} Keyframes, Dauer {document.path.duration_text} s."
+        )
+        if self.export_dialog is not None and self.export_dialog.winfo_exists():
+            self.export_dialog.refresh_path_summary()
+        return True
+
+    def save_flight_plan(self) -> bool:
+        if self.camera_path_file is None:
+            return self.save_flight_plan_as()
+        return self._save_flight_plan_path(self.camera_path_file)
+
+    def save_flight_plan_as(self) -> bool:
+        if self.camera_path is None:
+            messagebox.showerror(
+                "Flugplan speichern",
+                "Der Flugplan muss mindestens zwei gültige Keyframes enthalten.",
+                parent=self.root,
+            )
+            return False
+        initial_name = (
+            self.camera_path_file.name
+            if self.camera_path_file is not None
+            else f"{self.camera_path_name}{FLIGHT_PLAN_EXTENSION}"
+        )
+        selected = filedialog.asksaveasfilename(
+            parent=self.root,
+            title="Flugplan speichern unter",
+            defaultextension=FLIGHT_PLAN_EXTENSION,
+            initialfile=initial_name,
+            filetypes=(("Fractal-Flight-Flugplan", f"*{FLIGHT_PLAN_EXTENSION}"),),
+        )
+        if not selected:
+            return False
+        path = Path(selected)
+        self.camera_path_name = suggested_flight_plan_name(path)
+        return self._save_flight_plan_path(path)
+
+    def _save_flight_plan_path(self, path: Path) -> bool:
+        if self.camera_path is None:
+            messagebox.showerror(
+                "Flugplan speichern",
+                "Der Flugplan muss mindestens zwei gültige Keyframes enthalten.",
+                parent=self.root,
+            )
+            return False
+        try:
+            save_flight_plan(
+                path,
+                FlightPlanDocument(self.camera_path_name, self.camera_path),
+            )
+        except Exception as exc:
+            messagebox.showerror("Flugplan speichern", str(exc), parent=self.root)
+            return False
+        self.camera_path_file = path
+        self.camera_path_dirty = False
+        self.position_var.set(f"Flugplan {self.camera_path_name} gespeichert: {path}")
+        return True
 
     def open_export_dialog(self) -> None:
         if self.export_dialog is not None and self.export_dialog.winfo_exists():
@@ -251,6 +378,8 @@ class FractalStudioApp(BaseFractalStudioApp):
         )
 
     def _on_close(self) -> None:
+        if not self._confirm_discard_flight_plan_changes("dem Beenden"):
+            return
         self.export_controller.cancel()
         self.export_controller.shutdown()
         super()._on_close()
