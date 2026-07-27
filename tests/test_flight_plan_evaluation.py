@@ -70,6 +70,7 @@ def test_render_track_blends_palette_and_raises_quality_before_deep_target() -> 
 
     halfway = track.evaluate("1")
     assert halfway.max_iterations == 3000
+    assert halfway.color_iterations == 3000
     assert halfway.reference_bits == 768
     assert halfway.palette == PaletteBlend("inferno", "ocean", 0.5)
     assert halfway.cycles == 1.5
@@ -82,12 +83,14 @@ def test_render_track_blends_palette_and_raises_quality_before_deep_target() -> 
     at_cut = track.evaluate("4")
     assert at_cut.palette == PaletteBlend.solid("ember")
     assert at_cut.max_iterations == 1200
+    assert at_cut.color_iterations == 3000
     assert at_cut.reference_bits == 384
 
     held = track.evaluate("6")
     assert held.palette == PaletteBlend.solid("ember")
     assert held.cycles == 1.5
     assert held.max_iterations == 900
+    assert held.color_iterations == 3000
     assert held.reference_bits == 256
 
 
@@ -100,6 +103,7 @@ def test_document_evaluation_builds_request_from_scene_camera_and_render_track()
     assert request.julia_c_real == float("-0.70176")
     assert request.julia_c_imag == float("-0.3842")
     assert request.max_iterations == 3000
+    assert request.color_iterations == 3000
     assert request.reference_bits == 768
     assert request.center_x_text == frame.camera.center_x_text
     assert request.view_width_text == frame.camera.view_width_text
@@ -128,6 +132,7 @@ def test_offline_jobs_use_exact_time_dependent_render_state() -> None:
     assert jobs[0].cycles == 1.5
     assert jobs[-1].time_seconds_text == "4.0"
     assert jobs[-1].request.max_iterations == 1200
+    assert all(job.request.color_iterations == 3000 for job in jobs)
     assert jobs[-1].palette == PaletteBlend.solid("ember")
     assert all(job.request.width == 16 and job.request.height == 10 for job in jobs)
 
