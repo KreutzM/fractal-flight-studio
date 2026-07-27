@@ -47,7 +47,9 @@ def _complex_pow_f64(zr, zi, power):
 
 
 @njit(cache=True, inline="always")
-def _escape_value_f32(x, y, kind, max_iter, escape_squared, julia_r, julia_i, exponent):
+def _escape_value_f32(
+    x, y, kind, max_iter, color_iter, escape_squared, julia_r, julia_i, exponent
+):
     zero = np.float32(0.0)
     one = np.float32(1.0)
     two = np.float32(2.0)
@@ -82,7 +84,7 @@ def _escape_value_f32(x, y, kind, max_iter, escape_squared, julia_r, julia_i, ex
                 + one
                 - np.float32(math.log(inner_log)) / np.float32(math.log(base))
             )
-            value = smooth / np.float32(max_iter)
+            value = smooth / np.float32(color_iter)
             if value < zero:
                 value = zero
             return value, False
@@ -90,7 +92,9 @@ def _escape_value_f32(x, y, kind, max_iter, escape_squared, julia_r, julia_i, ex
 
 
 @njit(cache=True, inline="always")
-def _escape_value_f64(x, y, kind, max_iter, escape_squared, julia_r, julia_i, exponent):
+def _escape_value_f64(
+    x, y, kind, max_iter, color_iter, escape_squared, julia_r, julia_i, exponent
+):
     if kind == 1:
         zr, zi = x, y
         cr, ci = julia_r, julia_i
@@ -114,12 +118,12 @@ def _escape_value_f64(x, y, kind, max_iter, escape_squared, julia_r, julia_i, ex
             magnitude = math.sqrt(magnitude_squared)
             base = float(exponent if kind == 3 else 2)
             smooth = iteration + 1.0 - math.log(max(math.log(magnitude), 1e-30)) / math.log(base)
-            return max(0.0, smooth / max_iter), False
+            return max(0.0, smooth / color_iter), False
     return 0.0, True
 
 
 @njit(cache=True, inline="always")
-def _newton_value_f32(x, y, max_iter):
+def _newton_value_f32(x, y, max_iter, color_iter):
     zero = np.float32(0.0)
     one = np.float32(1.0)
     half = np.float32(0.5)
@@ -150,7 +154,7 @@ def _newton_value_f32(x, y, max_iter):
         d0 = (zr - one) * (zr - one) + zi * zi
         d1 = (zr + half) * (zr + half) + (zi - root_imag) * (zi - root_imag)
         d2 = (zr + half) * (zr + half) + (zi + root_imag) * (zi + root_imag)
-        local = one - np.float32(iteration) / np.float32(max_iter)
+        local = one - np.float32(iteration) / np.float32(color_iter)
         shade = np.float32(0.12) + np.float32(0.76) * local
         if d0 < tolerance_squared:
             return shade / three, False
@@ -162,7 +166,7 @@ def _newton_value_f32(x, y, max_iter):
 
 
 @njit(cache=True, inline="always")
-def _newton_value_f64(x, y, max_iter):
+def _newton_value_f64(x, y, max_iter, color_iter):
     zr, zi = x, y
     roots_r = (1.0, -0.5, -0.5)
     roots_i = (0.0, 0.8660254037844386, -0.8660254037844386)
@@ -189,7 +193,7 @@ def _newton_value_f64(x, y, max_iter):
             rr = zr - roots_r[root]
             ri = zi - roots_i[root]
             if rr * rr + ri * ri < tolerance_squared:
-                local = 1.0 - iteration / max_iter
+                local = 1.0 - iteration / color_iter
                 return (root + 0.12 + 0.76 * local) / 3.0, False
     return 0.0, True
 
@@ -204,6 +208,7 @@ def _render_kernel_f32(
     dy,
     kind,
     max_iter,
+    color_iter,
     escape_squared,
     julia_r,
     julia_i,
@@ -216,10 +221,18 @@ def _render_kernel_f32(
         for px in range(width):
             x = x0 + np.float32(px) * dx
             if kind == 4:
-                value, is_inside = _newton_value_f32(x, y, max_iter)
+                value, is_inside = _newton_value_f32(x, y, max_iter, color_iter)
             else:
                 value, is_inside = _escape_value_f32(
-                    x, y, kind, max_iter, escape_squared, julia_r, julia_i, exponent
+                    x,
+                    y,
+                    kind,
+                    max_iter,
+                    color_iter,
+                    escape_squared,
+                    julia_r,
+                    julia_i,
+                    exponent,
                 )
             values[py, px] = value
             inside[py, px] = is_inside
@@ -236,6 +249,7 @@ def _render_kernel_f64(
     dy,
     kind,
     max_iter,
+    color_iter,
     escape_squared,
     julia_r,
     julia_i,
@@ -248,10 +262,18 @@ def _render_kernel_f64(
         for px in range(width):
             x = x0 + px * dx
             if kind == 4:
-                value, is_inside = _newton_value_f64(x, y, max_iter)
+                value, is_inside = _newton_value_f64(x, y, max_iter, color_iter)
             else:
                 value, is_inside = _escape_value_f64(
-                    x, y, kind, max_iter, escape_squared, julia_r, julia_i, exponent
+                    x,
+                    y,
+                    kind,
+                    max_iter,
+                    color_iter,
+                    escape_squared,
+                    julia_r,
+                    julia_i,
+                    exponent,
                 )
             values[py, px] = value
             inside[py, px] = is_inside
@@ -269,6 +291,7 @@ def _render_perturb_kernel_f64(
     dx,
     dy,
     max_iter,
+    color_iter,
     escape_squared,
     orbit_real,
     orbit_imag,
@@ -337,7 +360,7 @@ def _render_perturb_kernel_f64(
                     if inner_log < tiny:
                         inner_log = tiny
                     smooth = iteration + 1.0 - math.log(inner_log) / math.log(2.0)
-                    value = smooth / max_iter
+                    value = smooth / color_iter
                     if value < 0.0:
                         value = 0.0
                     values[py, px] = value
@@ -403,6 +426,7 @@ class CpuRenderer(Renderer):
                 perturb.dx,
                 perturb.dy,
                 request.max_iterations,
+                request.effective_color_iterations,
                 request.escape_radius * request.escape_radius,
                 perturb.orbit_real,
                 perturb.orbit_imag,
@@ -421,6 +445,7 @@ class CpuRenderer(Renderer):
                     "true_precision_kernel": True,
                     "render_mode": "perturbation",
                     "reference_bits": perturb.reference_bits,
+                    "color_iterations": request.effective_color_iterations,
                     "reference_orbit_length": len(perturb.orbit_real),
                     "reference_rebase_limit": perturb.reference_rebase_limit,
                     "rebasing_enabled": True,
@@ -446,6 +471,7 @@ class CpuRenderer(Renderer):
             dy,
             _KIND_CODES[request.fractal],
             request.max_iterations,
+            request.effective_color_iterations,
             dtype(request.escape_radius * request.escape_radius),
             dtype(request.julia_c_real),
             dtype(request.julia_c_imag),
@@ -457,5 +483,10 @@ class CpuRenderer(Renderer):
             inside=inside,
             backend=self.name,
             elapsed_seconds=elapsed,
-            details={"precision": request.precision.value, "true_precision_kernel": True, "render_mode": "direct"},
+            details={
+                "precision": request.precision.value,
+                "true_precision_kernel": True,
+                "render_mode": "direct",
+                "color_iterations": request.effective_color_iterations,
+            },
         )
