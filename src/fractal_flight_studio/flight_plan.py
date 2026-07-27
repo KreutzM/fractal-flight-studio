@@ -126,6 +126,7 @@ class EvaluatedRenderState:
     """Resolved quality and coloring settings for one exact flight time."""
 
     max_iterations: int
+    color_iterations: int
     reference_bits: int
     palette: PaletteBlend
     cycles_text: str
@@ -135,6 +136,10 @@ class EvaluatedRenderState:
     def __post_init__(self) -> None:
         if self.max_iterations < 1:
             raise ValueError("evaluated max_iterations must be positive")
+        if self.color_iterations < self.max_iterations:
+            raise ValueError(
+                "evaluated color_iterations must not be below max_iterations"
+            )
         if self.reference_bits < 64:
             raise ValueError("evaluated reference_bits must be at least 64")
         cycles = _finite_decimal(self.cycles_text, "evaluated render cycles")
@@ -190,6 +195,12 @@ class RenderTrack:
     @property
     def first_profile(self) -> RenderProfile:
         return self.cues[0].profile
+
+    @property
+    def color_iterations(self) -> int:
+        """One stable color scale for the complete render track."""
+
+        return max(cue.profile.max_iterations for cue in self.cues)
 
     @property
     def duration_text(self) -> str:
@@ -267,6 +278,7 @@ class RenderTrack:
             )
             return EvaluatedRenderState(
                 max_iterations=maximum_iterations,
+                color_iterations=self.color_iterations,
                 reference_bits=reference_bits,
                 palette=palette,
                 cycles_text=cycles_text,
@@ -308,6 +320,7 @@ class EvaluatedFlightFrame:
             viewport=self.camera.proxy_viewport(digits=self.digits),
             fractal=self.scene.fractal,
             max_iterations=self.render.max_iterations,
+            color_iterations=self.render.color_iterations,
             julia_c_real=float(julia_real),
             julia_c_imag=float(julia_imag),
             exponent=self.scene.exponent,
@@ -416,6 +429,7 @@ def evaluate_flight_frame(
         scene=scene,
         render=EvaluatedRenderState(
             request_template.max_iterations,
+            request_template.effective_color_iterations,
             request_template.reference_bits,
             palette_state,
             format(float(cycles), ".17g"),
