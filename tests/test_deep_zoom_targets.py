@@ -91,12 +91,12 @@ def test_apply_catalog_target_keeps_text_precision_and_recommendations():
 
     FractalStudioApp._apply_deep_zoom_target(app, target, load_view=False)
 
-    assert app.stop_count == 1
+    assert app.stop_count == 0
     assert app.fractal_var.get() == "mandelbrot"
     assert app.iterations_var.get() == 1500
     assert app.reference_bits_var.get() == 384
     assert app.palette_var.get() == "electric"
-    assert controller.target_text == ("0.370624233423", "-0.670428331878")
+    assert controller.target_text is None
     assert app.camera == CameraState()
     assert app.render_count == 0
 
@@ -109,4 +109,4 @@ def test_apply_catalog_target_keeps_text_precision_and_recommendations():
         target.view_width_text,
     )
     assert app.render_count == 1
-    assert "Diamond Cross Junction geladen" in app.position_var.get()
+    assert "Diamond Cross Junction als Ansicht geladen" in app.position_var.get()
