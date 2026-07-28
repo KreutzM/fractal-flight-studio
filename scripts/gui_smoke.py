@@ -30,25 +30,35 @@ def main() -> int:
     assert len(app.deep_zoom_targets) == 10
     assert app.deep_zoom_target_var.get() == app.deep_zoom_targets[0].name
     app.set_catalog_flight_target()
-    assert app.flight_controller.target_x_text is not None
+    assert app.flight_controller.target_text == (
+        app.deep_zoom_targets[0].center_x_text,
+        app.deep_zoom_targets[0].center_y_text,
+    )
     app.load_catalog_target_view()
     assert app.camera.center_x_text == app.deep_zoom_targets[0].center_x_text
     app.open_target_browser()
     browser = app.target_browser
     assert browser is not None
-    assert len(browser.filtered_targets) == len(app.all_deep_zoom_targets)
-    browser.search_var.set("Seahorse")
-    browser._apply_filter()
-    assert browser.filtered_targets
+    root.update_idletasks()
+    assert len(browser._visible_targets) == 10
+    browser.search_var.set("spiral")
+    root.update_idletasks()
+    assert browser._visible_targets
+    assert all(
+        "spiral" in " ".join((target.name, target.description, *target.tags)).casefold()
+        for target in browser._visible_targets
+    )
+    selected = browser.selected_target
+    assert selected is not None
+    browser._set_selected_target()
+    assert app.flight_controller.target_text == (selected.center_x_text, selected.center_y_text)
+    assert app.deep_zoom_target_var.get() == selected.name
     browser.destroy()
     root.update_idletasks()
 
     app.open_timeline_editor()
     timeline = app.timeline_editor
     assert timeline is not None
-    timeline._use_current_camera()
-    timeline._add_keyframe()
-    assert timeline.draft.keyframes
     assert timeline.draft.keyframes[0].center_interpolation is CenterInterpolation.FOCUS
     timeline._draft = timeline.draft.add_keyframe(
         "2",
@@ -118,7 +128,7 @@ def main() -> int:
     app.open_export_dialog()
     export_dialog = app.export_dialog
     assert export_dialog is not None
-    assert "2.0 s" in export_dialog.plan_summary_var.get()
+    assert "2 Keyframes" in export_dialog.path_summary_var.get()
     assert "60 Frames" in export_dialog.plan_summary_var.get()
     assert export_dialog.tone_stability_var.get() == "Zeitlich stabilisiert"
     assert "Tone Mapping: Zeitlich stabilisiert" in export_dialog.plan_summary_var.get()
