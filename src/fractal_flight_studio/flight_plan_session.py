@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Callable
 import mpmath as mp
 
 from .camera import CameraState
-from .flight_path import CameraPath, CenterInterpolation, Easing
+from .flight_path import CameraPath, CenterInterpolation, Easing, FlightKeyframe
 from .flight_plan import (
     FlightPlanDocument,
     FlightScene,
@@ -183,24 +183,71 @@ class FlightPlanSession:
         self._playhead_time_text = "0"
         self._notify()
 
-    def append_transition(self, plan: "TransitionPlan") -> None:
-        """Atomically append one generated camera/render transition."""
+    def append_transition(
+        self,
+        plan: "TransitionPlan",
+        *,
+        initialize_if_needed: bool = False,
+    ) -> None:
+        """Atomically append one generated camera/render transition.
 
-        from .flight_transition import merge_render_cues
+        ``initialize_if_needed`` is used by the right-click workflow.  A fresh
+        one-keyframe draft is rebased to the exact camera from which the user
+        clicked, but only when the proposal is accepted.  Cancelling the dialog
+        therefore never dirties or changes the shared flight plan.
+        """
+
+        from .flight_transition import end_render_profile, merge_render_cues
 
         if plan.digits != self._camera_draft.digits:
             raise ValueError("transition and flight plan must use the same precision")
-        if not self._camera_draft.keyframes:
-            raise ValueError("a transition requires an existing source keyframe")
-        with mp.workdps(plan.digits):
-            current_end = self._camera_draft.keyframes[-1].time_seconds(
-                digits=plan.digits
-            )
-            requested_start = mp.mpf(plan.start_time_text)
-            if current_end != requested_start:
-                raise ValueError("transition must start at the current path end")
 
         draft = self._camera_draft
+        track = self._render_track
+        scene = self._scene
+        if initialize_if_needed and not draft.valid:
+            if len(draft.keyframes) > 1:
+                raise ValueError("repair the invalid flight-plan draft before adding a target")
+            with mp.workdps(plan.digits):
+                if mp.mpf(plan.start_time_text) != 0:
+                    raise ValueError("a new flight plan must start at zero seconds")
+            draft = CameraPathDraft(
+                (
+                    FlightKeyframe(
+                        "0",
+                        plan.source_camera,
+                        Easing.SMOOTHERSTEP,
+                        CenterInterpolation.FOCUS,
+                    ),
+                ),
+                digits=plan.digits,
+            )
+            track = RenderTrack.default(plan.source_profile, digits=plan.digits)
+            scene = plan.scene
+        else:
+            if not draft.keyframes:
+                raise ValueError("a transition requires an existing source keyframe")
+            if scene != plan.scene:
+                raise ValueError("transition scene does not match the flight plan")
+            with mp.workdps(plan.digits):
+                current_end = draft.keyframes[-1].time_seconds(digits=plan.digits)
+                requested_start = mp.mpf(plan.start_time_text)
+                if current_end != requested_start:
+                    raise ValueError("transition must start at the current path end")
+            if draft.keyframes[-1].camera != plan.source_camera:
+                raise ValueError("transition source camera is stale; rebuild the proposal")
+            current_profile = end_render_profile(
+                render_state=track.evaluate(plan.start_time_text)
+            )
+            if (
+                current_profile.max_iterations != plan.source_profile.max_iterations
+                or current_profile.reference_bits != plan.source_profile.reference_bits
+                or current_profile.palette != plan.source_profile.palette
+                or mp.mpf(current_profile.cycles_text)
+                != mp.mpf(plan.source_profile.cycles_text)
+            ):
+                raise ValueError("transition source render profile is stale; rebuild the proposal")
+
         for frame in plan.keyframes:
             draft = draft.add_keyframe(
                 frame.time_seconds_text,
@@ -210,7 +257,7 @@ class FlightPlanSession:
             )
         track = RenderTrack(
             merge_render_cues(
-                self._render_track.cues,
+                track.cues,
                 plan.render_cues,
                 digits=plan.digits,
             ),
@@ -218,9 +265,10 @@ class FlightPlanSession:
         )
         # Validate the complete candidate before mutating the shared session.
         path = draft.build_path()
-        FlightPlanDocument(self._name, path, self._scene, track)
+        FlightPlanDocument(self._name, path, scene, track)
 
         self._camera_draft = draft
+        self._scene = scene
         self._render_track = track
         self._dirty = True
         with mp.workdps(plan.digits):
