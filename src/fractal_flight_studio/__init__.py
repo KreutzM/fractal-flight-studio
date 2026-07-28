@@ -53,6 +53,11 @@ from .flight_plan_io import (
     suggested_flight_plan_name,
 )
 from .flight_plan_session import FlightPlanSession
+from .flight_plan_playback import (
+    FlightPlanPlaybackController,
+    PlaybackSample,
+    PlaybackState,
+)
 from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
 from .palettes import PaletteBlend
 from .mp4_export import build_mp4_export_plan, export_path_to_mp4
@@ -107,6 +112,7 @@ __all__ = [
     "FlightPlanDocument",
     "FlightPlanError",
     "FlightPlanFormatError",
+    "FlightPlanPlaybackController",
     "FlightPlanSession",
     "FlightScene",
     "FLIGHT_PLAN_EXTENSION",
@@ -127,6 +133,8 @@ __all__ = [
     "Precision",
     "PaletteBlend",
     "PaletteTransition",
+    "PlaybackSample",
+    "PlaybackState",
     "PreflightCancelled",
     "PreflightIssue",
     "PreflightIssueKind",
