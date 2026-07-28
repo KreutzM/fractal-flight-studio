@@ -133,23 +133,26 @@ def build_ui(app) -> None:
     ttk.Spinbox(julia, from_=2, to=8, textvariable=app.exponent_var, width=10).grid(row=2, column=1)
     row += 1
 
-    flight = ttk.LabelFrame(controls, text="Flug", padding=6)
+    flight = ttk.LabelFrame(controls, text="Flugplan-Vorschau", padding=6)
     flight.grid(row=row, column=0, sticky="ew", pady=6)
-    ttk.Label(flight, text="Zoom pro Frame").grid(row=0, column=0, sticky="w")
-    ttk.Entry(flight, textvariable=app.flight_rate_var, width=10).grid(row=0, column=1)
-    ttk.Label(flight, text="Render-Skalierung").grid(row=1, column=0, sticky="w")
+    ttk.Label(flight, text="Render-Skalierung").grid(row=0, column=0, sticky="w")
     ttk.Combobox(
         flight,
         textvariable=app.flight_scale_var,
         values=(0.5, 0.75, 1.0),
         state="readonly",
         width=8,
-    ).grid(row=1, column=1)
-    app.flight_button = ttk.Button(flight, text="Flug starten", command=app.toggle_flight)
-    app.flight_button.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
-    ttk.Label(flight, text="Rechtsklick setzt Ziel", foreground="#555").grid(
-        row=3, column=0, columnspan=2, sticky="w", pady=(4, 0)
-    )
+    ).grid(row=0, column=1)
+    ttk.Label(
+        flight,
+        text="Rechtsklick fügt ein Ziel zum Flugplan hinzu",
+        foreground="#555",
+        wraplength=210,
+    ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(6, 0))
+    # Compatibility attributes for the retired instant-flight controller.  They
+    # stay ungridded so older programmatic integrations fail gracefully while
+    # the normal UI exposes only the unified flight-plan workflow.
+    app.flight_button = ttk.Button(flight, text="Explorationsflug", command=app.toggle_flight)
     row += 1
 
     buttons = ttk.Frame(controls)
