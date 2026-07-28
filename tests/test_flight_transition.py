@@ -239,3 +239,53 @@ def test_session_rejects_transition_that_does_not_start_at_path_end_without_muta
 def test_transition_settings_validate_overview_threshold():
     with pytest.raises(ValueError, match="must not exceed one"):
         TransitionSettings(overview_threshold_text="1.1").values(digits=80)
+
+
+def test_suggested_free_target_width_is_exact_tenth():
+    from fractal_flight_studio.flight_transition import suggested_target_width
+
+    assert suggested_target_width(CameraState("-0.5", "0", "3.5"), digits=80) == "0.35"
+
+
+def test_session_initializes_fresh_plan_from_accepted_transition_source():
+    session = FlightPlanSession.new(
+        CameraState("-0.5", "0", "3.5"),
+        digits=80,
+        scene=SCENE,
+        render_profile=SOURCE_PROFILE,
+    )
+    clicked_from = CameraState("-0.72", "0.12", "0.08")
+    plan = plan_transition(
+        clicked_from,
+        SOURCE_PROFILE,
+        target("-0.74", "0.13", "0.008"),
+        start_time_text="0",
+        requested_mode=TransitionMode.DIRECT,
+    )
+
+    session.append_transition(plan, initialize_if_needed=True)
+
+    assert session.valid
+    assert session.camera_path is not None
+    assert session.camera_path.keyframes[0].camera == clicked_from
+    assert session.camera_path.keyframes[-1].camera == plan.keyframes[-1].camera
+    assert session.render_track.first_profile.max_iterations == SOURCE_PROFILE.max_iterations
+
+
+def test_fresh_transition_is_not_applied_until_session_accepts_it():
+    session = FlightPlanSession.new(
+        SOURCE,
+        digits=80,
+        scene=SCENE,
+        render_profile=SOURCE_PROFILE,
+    )
+    before = session.camera_draft
+    plan_transition(
+        CameraState("-0.7", "0.1", "0.1"),
+        SOURCE_PROFILE,
+        target("-0.74", "0.13", "0.01"),
+        start_time_text="0",
+    )
+
+    assert session.camera_draft == before
+    assert not session.dirty
