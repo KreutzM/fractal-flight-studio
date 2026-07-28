@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
+
+import mpmath as mp
 
 from .camera import CameraState
 from .flight_path import CameraPath, CenterInterpolation, Easing
@@ -12,6 +14,9 @@ from .flight_plan import (
     RenderTrack,
 )
 from .path_editor import CameraPathDraft
+
+if TYPE_CHECKING:
+    from .flight_transition import TransitionPlan
 
 
 SessionListener = Callable[["FlightPlanSession"], None]
@@ -176,6 +181,56 @@ class FlightPlanSession:
         self._dirty = bool(dirty)
         self._selected_keyframe_index = 0
         self._playhead_time_text = "0"
+        self._notify()
+
+    def append_transition(self, plan: "TransitionPlan") -> None:
+        """Atomically append one generated camera/render transition."""
+
+        from .flight_transition import merge_render_cues
+
+        if plan.digits != self._camera_draft.digits:
+            raise ValueError("transition and flight plan must use the same precision")
+        if not self._camera_draft.keyframes:
+            raise ValueError("a transition requires an existing source keyframe")
+        with mp.workdps(plan.digits):
+            current_end = self._camera_draft.keyframes[-1].time_seconds(
+                digits=plan.digits
+            )
+            requested_start = mp.mpf(plan.start_time_text)
+            if current_end != requested_start:
+                raise ValueError("transition must start at the current path end")
+
+        draft = self._camera_draft
+        for frame in plan.keyframes:
+            draft = draft.add_keyframe(
+                frame.time_seconds_text,
+                frame.camera,
+                frame.easing,
+                frame.center_interpolation,
+            )
+        track = RenderTrack(
+            merge_render_cues(
+                self._render_track.cues,
+                plan.render_cues,
+                digits=plan.digits,
+            ),
+            digits=plan.digits,
+        )
+        # Validate the complete candidate before mutating the shared session.
+        path = draft.build_path()
+        FlightPlanDocument(self._name, path, self._scene, track)
+
+        self._camera_draft = draft
+        self._render_track = track
+        self._dirty = True
+        with mp.workdps(plan.digits):
+            arrival = mp.mpf(plan.arrival_time_text)
+            self._selected_keyframe_index = next(
+                index
+                for index, frame in enumerate(draft.keyframes)
+                if frame.time_seconds(digits=plan.digits) == arrival
+            )
+        self._playhead_time_text = plan.start_time_text
         self._notify()
 
     def set_name(self, name: str, *, mark_dirty: bool = True) -> None:
