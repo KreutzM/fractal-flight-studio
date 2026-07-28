@@ -241,10 +241,23 @@ def test_transition_settings_validate_overview_threshold():
         TransitionSettings(overview_threshold_text="1.1").values(digits=80)
 
 
-def test_suggested_free_target_width_is_exact_tenth():
+def test_suggested_free_target_width_preserves_current_scale_by_default():
     from fractal_flight_studio.flight_transition import suggested_target_width
 
-    assert suggested_target_width(CameraState("-0.5", "0", "3.5"), digits=80) == "0.35"
+    camera = CameraState("-0.5", "0", "3.5")
+    assert suggested_target_width(camera, digits=80) == "3.5"
+    assert suggested_target_width(camera, zoom_factor_text="10", digits=80) == "0.35"
+
+
+def test_suggested_free_target_width_rejects_zoom_out_factor():
+    from fractal_flight_studio.flight_transition import suggested_target_width
+
+    with pytest.raises(ValueError, match="at least one"):
+        suggested_target_width(
+            CameraState("-0.5", "0", "3.5"),
+            zoom_factor_text="0.5",
+            digits=80,
+        )
 
 
 def test_session_initializes_fresh_plan_from_accepted_transition_source():
