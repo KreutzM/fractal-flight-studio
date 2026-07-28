@@ -7,11 +7,23 @@ from typing import Callable, Sequence
 from .camera import CameraState
 from .deep_zoom_targets import DeepZoomTarget
 from .flight_path import CameraPath, CenterInterpolation, Easing
+from .flight_plan import PaletteTransition
 from .flight_plan_session import FlightPlanSession
+from .flight_transition import (
+    TransitionMode,
+    TransitionPlan,
+    TransitionSettings,
+    TransitionTarget,
+    end_render_profile,
+    plan_transition,
+)
 from .path_editor import CameraPathDraft
+from .transition_dialog import TargetTransitionDialog
 
 CameraGetter = Callable[[], CameraState]
 CameraPreview = Callable[[CameraState, str], None]
+AspectRatioGetter = Callable[[], float]
+PlaybackStarter = Callable[[str], None]
 
 
 class CameraPathEditorWindow(tk.Toplevel):
@@ -25,6 +37,8 @@ class CameraPathEditorWindow(tk.Toplevel):
         targets: Sequence[DeepZoomTarget],
         on_preview: CameraPreview,
         session: FlightPlanSession,
+        get_aspect_ratio: AspectRatioGetter | None = None,
+        on_play_from: PlaybackStarter | None = None,
     ) -> None:
         super().__init__(parent)
         self.title("Flugplan / Keyframes")
@@ -37,6 +51,9 @@ class CameraPathEditorWindow(tk.Toplevel):
         self._targets_by_name = {target.name: target for target in self._targets}
         self._on_preview = on_preview
         self._session = session
+        self._get_aspect_ratio = get_aspect_ratio or (lambda: 16 / 9)
+        self._on_play_from = on_play_from
+        self._transition_dialog: TargetTransitionDialog | None = None
         self._displayed_draft: CameraPathDraft | None = None
 
         self.time_var = tk.StringVar(value=self.draft.suggested_time_text())
@@ -79,6 +96,9 @@ class CameraPathEditorWindow(tk.Toplevel):
 
     def destroy(self) -> None:
         self._session.remove_listener(self._on_session_changed)
+        dialog = self._transition_dialog
+        if dialog is not None and dialog.winfo_exists():
+            dialog.destroy()
         super().destroy()
 
     def _on_session_changed(self, session: FlightPlanSession) -> None:
@@ -190,6 +210,11 @@ class CameraPathEditorWindow(tk.Toplevel):
         ttk.Button(source, text="Katalogziel", command=self._fill_target_camera).grid(
             row=1, column=1, sticky="ew", padx=(6, 0), pady=(6, 0)
         )
+        ttk.Button(
+            source,
+            text="Katalogziel mit Übergang …",
+            command=self._open_transition_dialog,
+        ).grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         source.columnconfigure(0, weight=1)
 
         actions = ttk.Frame(editor_frame)
@@ -241,6 +266,80 @@ class CameraPathEditorWindow(tk.Toplevel):
         footer = ttk.Frame(self, padding=(12, 0, 12, 12))
         footer.pack(fill=tk.X)
         ttk.Button(footer, text="Schließen", command=self._close).pack(side=tk.RIGHT)
+
+    def _transition_source(self) -> tuple[CameraState, str]:
+        frames = self.draft.keyframes
+        if not frames:
+            raise ValueError("Lege zuerst einen Ausgangs-Keyframe an.")
+        frame = frames[-1]
+        return frame.camera, frame.time_seconds_text
+
+    def _build_catalog_transition(
+        self,
+        target: DeepZoomTarget,
+        mode: TransitionMode,
+        palette_transition: PaletteTransition,
+    ) -> TransitionPlan:
+        source_camera, start_time = self._transition_source()
+        state = self._session.render_track.evaluate(start_time)
+        source_profile = end_render_profile(render_state=state)
+        transition_target = TransitionTarget.from_deep_zoom_target(
+            target,
+            scene=self._session.scene,
+            cycles_text=state.cycles_text,
+        )
+        aspect = max(0.1, float(self._get_aspect_ratio()))
+        settings = TransitionSettings(aspect_ratio_text=repr(aspect))
+        return plan_transition(
+            source_camera,
+            source_profile,
+            transition_target,
+            start_time_text=start_time,
+            digits=self.draft.digits,
+            requested_mode=mode,
+            palette_transition=palette_transition,
+            settings=settings,
+        )
+
+    def _apply_catalog_transition(
+        self, plan: TransitionPlan, play: bool = False
+    ) -> None:
+        self._session.append_transition(plan)
+        self._refresh_tree(select_time=plan.arrival_time_text)
+        self._publish_path_state()
+        if play and self._on_play_from is not None:
+            self._on_play_from(plan.start_time_text)
+
+    def _append_catalog_transition(
+        self,
+        target: DeepZoomTarget,
+        mode: TransitionMode | str = TransitionMode.AUTO,
+        palette_transition: PaletteTransition | str = PaletteTransition.BLEND,
+        *,
+        play: bool = False,
+    ) -> TransitionPlan:
+        """Testable non-dialog entry point used by the GUI and smoke tests."""
+
+        plan = self._build_catalog_transition(
+            target,
+            TransitionMode(mode),
+            PaletteTransition(palette_transition),
+        )
+        self._apply_catalog_transition(plan, play)
+        return plan
+
+    def _open_transition_dialog(self) -> None:
+        if self._transition_dialog is not None and self._transition_dialog.winfo_exists():
+            self._transition_dialog.deiconify()
+            self._transition_dialog.lift()
+            return
+        self._transition_dialog = TargetTransitionDialog(
+            self,
+            targets=self._targets,
+            initial_target_name=self.target_var.get(),
+            build_plan=self._build_catalog_transition,
+            apply_plan=self._apply_catalog_transition,
+        )
 
     def _camera_from_form(self) -> CameraState:
         camera = CameraState(

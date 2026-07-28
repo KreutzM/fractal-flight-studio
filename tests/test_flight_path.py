@@ -123,6 +123,20 @@ def test_smoothstep_is_applied_to_outgoing_segment():
     assert mp.almosteq(mp.mpf(second.center_x_text), mp.mpf("1.5"))
 
 
+def test_step_easing_holds_source_until_exact_segment_end():
+    path = CameraPath(
+        (
+            FlightKeyframe("0", CameraState("0", "0", "2"), Easing.STEP),
+            FlightKeyframe("1", CameraState("4", "2", "0.25")),
+        )
+    )
+
+    before = path.evaluate("0.999999")
+    at_end = path.evaluate("1")
+    assert before.values(digits=80) == path.keyframes[0].camera.values(digits=80)
+    assert at_end.values(digits=80) == path.keyframes[1].camera.values(digits=80)
+
+
 def test_deep_zoom_path_is_deterministic_and_preserves_sub_float64_motion():
     path = CameraPath(
         (

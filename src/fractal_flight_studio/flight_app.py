@@ -321,6 +321,15 @@ class FractalStudioApp(BaseFractalStudioApp):
         assert self.flight_playback_panel is not None
         self.flight_playback_panel.play()
 
+    def _play_flight_plan_from(self, time_seconds_text: str) -> None:
+        if not self._ensure_playback_document():
+            return
+        if self.flight_controller.running:
+            self._stop_flight()
+        assert self.flight_playback_panel is not None
+        self.flight_playback_panel.seek(float(time_seconds_text))
+        self.flight_playback_panel.play()
+
     def _pause_flight_plan(self, *, request_render: bool = True) -> None:
         if self.flight_playback_panel is not None:
             self.flight_playback_panel.pause(request_render=request_render)
@@ -458,6 +467,9 @@ class FractalStudioApp(BaseFractalStudioApp):
             targets=self.all_deep_zoom_targets,
             on_preview=self._preview_camera_path,
             session=self.flight_plan_session,
+            get_aspect_ratio=lambda: max(1, self.canvas.winfo_width())
+            / max(1, self.canvas.winfo_height()),
+            on_play_from=self._play_flight_plan_from,
         )
 
     def _confirm_discard_flight_plan_changes(self, action: str) -> bool:
