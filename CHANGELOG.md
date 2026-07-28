@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Automatic multi-target transitions
+
+- Added deterministic `auto`, `direct`, `bridge`, `overview` and `cut` routing when appending catalog targets to a flight plan.
+- Auto mode chooses the smallest useful bridge width from exact center distance, viewport aspect ratio and both endpoint widths; it uses the full overview only when the bridge is already close to the root view.
+- Generated camera and render cues remain ordinary editable timeline entries. Quality requirements are raised before arrival, while palette handling can blend, hold or cut.
+- Added a compact target-transition dialog with route summary and “add and play” integration.
+
 ### Real-time flight-plan playback
 
 - Added wall-clock-based play, pause, stop, seek, keyframe navigation and playback-rate controls for complete flight plans.
@@ -11,6 +18,8 @@
 
 ### Validation
 
+- Added transition-planner regressions for direct, bridge, overview and cut routes, aspect-ratio-aware bridge geometry, exact target coordinates, render-cue merging and atomic session updates.
+- Extended the Xvfb GUI smoke test to append a catalog target through the transition workflow.
 - Added deterministic controller tests for monotonic timing, pause/resume, seeking, rates and end-of-plan behavior.
 - Extended the Xvfb GUI smoke test to cover seek, play, pause and stop.
 
