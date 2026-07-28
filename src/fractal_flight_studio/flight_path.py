@@ -22,6 +22,7 @@ class Easing(str, Enum):
     LINEAR = "linear"
     SMOOTHSTEP = "smoothstep"
     SMOOTHERSTEP = "smootherstep"
+    STEP = "step"
 
     def apply(self, progress: mp.mpf) -> mp.mpf:
         if progress <= 0:
@@ -30,6 +31,8 @@ class Easing(str, Enum):
             return mp.mpf("1")
         if self is Easing.LINEAR:
             return progress
+        if self is Easing.STEP:
+            return mp.mpf("0")
         if self is Easing.SMOOTHSTEP:
             return progress * progress * (3 - 2 * progress)
         return progress * progress * progress * (
