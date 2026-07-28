@@ -16,7 +16,7 @@ parallelisierter CPU-Renderer zur Verfügung.
 - automatische Backend-Auswahl: CUDA, falls verfügbar, sonst Numba-CPU
 - sichtbare GPU-Diagnose mit Gerät, Treiber, Compute Capability und Fehlergrund
 - PNG-Export sowie direkter H.264/H.265-MP4-Export über FFmpeg
-- visueller Flugplan-Editor mit exakten Keyframes, Preflight und abbrechbarem Hintergrundexport
+- visueller Flugplan-Editor mit exakten Keyframes, automatischen Mehrziel-Übergängen, Preflight und abbrechbarem Hintergrundexport
 - CLI für Einzelbilder und logarithmische Frame-Sequenzen
 - persistente CUDA-Puffer und GPU-Farbgebung; adaptives Tone Mapping benötigt nur eine kleine Bildstichprobe plus RGB-Rückübertragung
 - Unit-, Integrations-, CLI- und CUDA-Simulator-Tests
@@ -170,6 +170,7 @@ Helligkeit, Kontrast und Farbverteilung zwischen benachbarten Frames ruhiger.
 - „PNG exportieren“: Bild in aktueller Fensterauflösung speichern
 - „Flugplan …“: aktuelle Ansichten und Katalogziele als exakte X/Y/Zoom-Keyframes anlegen, pro Segment `focus` oder `linear` wählen und Zwischenpositionen prüfen
 - „Flugplan-Wiedergabe“: den vollständigen Plan abspielen, pausieren, stoppen, per Zeitleiste durchsuchen, zwischen Keyframes springen oder mit 0,5×/1×/2× wiedergeben
+- „Katalogziel mit Übergang …“: ein weiteres Ziel automatisch direkt, über eine Brückenansicht, über die Gesamtansicht oder als Schnitt anhängen; Palette wahlweise überblenden, halten oder umschalten
 - „Video exportieren …“: Auflösung und Framerate planen, FFmpeg prüfen, einen Low-Resolution-Preflight ausführen und anschließend direkt als MP4 rendern
 
 Die Echtzeitwiedergabe verwendet dieselbe zeitabhängige Kamera-, Qualitäts- und Palettenauswertung wie Preflight und MP4-Export. Der Playhead folgt einer monotonen Echtzeituhr. Ist das Rendering langsamer als die Timeline, werden veraltete Zwischenpositionen nicht nachgeholt; nach dem fertigen Frame wird direkt die aktuellste Position gerendert.
