@@ -67,6 +67,19 @@ class TransitionTarget:
 
 
 @dataclass(frozen=True, slots=True)
+class FreeTargetValues:
+    """Portable user-editable values for one free flight target."""
+
+    center_x_text: str
+    center_y_text: str
+    view_width_text: str
+    max_iterations: int
+    reference_bits: int
+    palette: str
+    cycles_text: str
+
+
+@dataclass(frozen=True, slots=True)
 class TransitionSettings:
     """Deterministic heuristics used to route and time one transition."""
 
@@ -110,6 +123,9 @@ class TransitionSettings:
 class TransitionPlan:
     """Absolute keyframes and render cues that can be appended atomically."""
 
+    source_camera: CameraState
+    source_profile: RenderProfile
+    scene: FlightScene
     mode: TransitionMode
     requested_mode: TransitionMode
     start_time_text: str
@@ -385,6 +401,9 @@ def plan_transition(
             effective_palette_mode,
         )
         return TransitionPlan(
+            source_camera=source_camera,
+            source_profile=source_profile,
+            scene=target.scene,
             mode=mode,
             requested_mode=requested,
             start_time_text=_format_decimal(start_time, digits=digits),
@@ -396,6 +415,22 @@ def plan_transition(
             target_name=target.name,
             digits=digits,
         )
+
+
+def suggested_target_width(
+    source_camera: CameraState,
+    *,
+    zoom_factor_text: str = "10",
+    digits: int = 80,
+) -> str:
+    """Return an exact, moderate default width for a free right-click target."""
+
+    with mp.workdps(digits):
+        _x, _y, width = source_camera.values(digits=digits)
+        factor = _positive_decimal(zoom_factor_text, "zoom factor", digits=digits)
+        if factor <= 1:
+            raise ValueError("zoom factor must be greater than one")
+        return _format_decimal(width / factor, digits=digits)
 
 
 def merge_render_cues(
