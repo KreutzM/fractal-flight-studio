@@ -151,6 +151,27 @@ def main() -> int:
     assert app.flight_plan_playback.state.value == "stopped"
     assert app.flight_plan_playback.playhead_seconds == 0.0
 
+    app.open_timeline_editor()
+    timeline = app.timeline_editor
+    assert timeline is not None
+    timeline._open_transition_dialog()
+    transition_dialog = timeline._transition_dialog
+    assert transition_dialog is not None
+    root.update_idletasks()
+    assert transition_dialog.current_plan is not None
+    transition_dialog.destroy()
+    transition = timeline._append_catalog_transition(app.all_deep_zoom_targets[1])
+    assert transition.mode.value in {"direct", "bridge", "overview"}
+    assert app.flight_plan_session.valid
+    assert len(app.flight_plan_session.render_track.cues) >= 3
+    assert app.camera_path is not None
+    assert app.camera_path.keyframes[-1].camera == transition.keyframes[-1].camera
+    with TemporaryDirectory() as directory:
+        assert app._save_flight_plan_path(
+            Path(directory) / "transition-smoke.fractal-flight.json"
+        )
+    timeline.destroy()
+
     app._on_close()
     return 0
 
