@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Unified right-click flight targets
+
+- Right-click now opens a compact next-target proposal instead of starting an independent endless zoom flight.
+- Free targets can edit exact coordinates, target width, transition mode, quality profile, palette and palette transition before being appended.
+- Fresh plans are initialized from the exact camera used for the click only after the proposal is accepted; cancelling leaves the shared session unchanged.
+- Catalog quick actions and the visual target browser now use the same automatic transition planner and add/add-and-play workflow.
+- The visible legacy instant-flight controls were retired from the normal interface; real-time playback and MP4 export share the same flight plan.
+
+### Validation
+
+- Added regressions for exact suggested widths, fresh-plan initialization, cancellation safety and stale transition sources.
+- Extended the Xvfb GUI smoke test through right-click proposal, acceptance, save/reload and catalog transition creation.
+
+
 ### Automatic multi-target transitions
 
 - Added deterministic `auto`, `direct`, `bridge`, `overview` and `cut` routing when appending catalog targets to a flight plan.

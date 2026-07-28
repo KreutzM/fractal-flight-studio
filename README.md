@@ -9,8 +9,8 @@ parallelisierter CPU-Renderer zur Verfügung.
 
 - Mandelbrot-, Julia-, Burning-Ship-, Multibrot- und Newton-Fraktale
 - geglättete Escape-Time-Farbgebung, fünf Paletten und automatisches Tone Mapping
-- Maus-Zoom am Cursor, Verschieben durch Ziehen und frei wählbares Flugziel
-- kontinuierlicher Zoomflug mit separat einstellbarer Render-Skalierung
+- Maus-Zoom am Cursor, Verschieben durch Ziehen und Rechtsklick-Vorschläge für exakte Flugplan-Ziele
+- Echtzeitwiedergabe des gemeinsamen Flugplans mit separat einstellbarer Render-Skalierung
 - echte getrennte `float32`- und `float64`-Kernels
 - Deep-Zoom-Modus für Mandelbrot mit stabilem hochpräzisem Referenzorbit, echtem Rebasing und Glitch-Reparatur
 - automatische Backend-Auswahl: CUDA, falls verfügbar, sonst Numba-CPU
@@ -165,17 +165,17 @@ Helligkeit, Kontrast und Farbverteilung zwischen benachbarten Frames ruhiger.
 
 - Mausrad: hinein- und herauszoomen
 - linke Maustaste ziehen: Ansicht verschieben
-- rechte Maustaste: Flugziel setzen
-- „Flug starten“: kontinuierlich zum Ziel zoomen; stoppt automatisch an der numerischen Präzisionsgrenze
+- rechte Maustaste: nächsten Ziel-Keyframe mit automatischem Übergang vorschlagen
+- „Hinzufügen und abspielen“: Ziel an den gemeinsamen Flugplan anhängen und den neuen Abschnitt sofort wiedergeben
 - „PNG exportieren“: Bild in aktueller Fensterauflösung speichern
-- „Flugplan …“: aktuelle Ansichten und Katalogziele als exakte X/Y/Zoom-Keyframes anlegen, pro Segment `focus` oder `linear` wählen und Zwischenpositionen prüfen
+- „Flugplan …“: aktuelle Ansichten und Katalogziele als exakte X/Y/Zoom-Keyframes anlegen, automatische `direct`/`bridge`/`overview`/`cut`-Übergänge erzeugen und alle Zwischenpositionen editieren
 - „Flugplan-Wiedergabe“: den vollständigen Plan abspielen, pausieren, stoppen, per Zeitleiste durchsuchen, zwischen Keyframes springen oder mit 0,5×/1×/2× wiedergeben
 - „Katalogziel mit Übergang …“: ein weiteres Ziel automatisch direkt, über eine Brückenansicht, über die Gesamtansicht oder als Schnitt anhängen; Palette wahlweise überblenden, halten oder umschalten
 - „Video exportieren …“: Auflösung und Framerate planen, FFmpeg prüfen, einen Low-Resolution-Preflight ausführen und anschließend direkt als MP4 rendern
 
 Die Echtzeitwiedergabe verwendet dieselbe zeitabhängige Kamera-, Qualitäts- und Palettenauswertung wie Preflight und MP4-Export. Der Playhead folgt einer monotonen Echtzeituhr. Ist das Rendering langsamer als die Timeline, werden veraltete Zwischenpositionen nicht nachgeholt; nach dem fertigen Frame wird direkt die aktuellste Position gerendert.
 
-Für normale Vorschau und Flug kann die Render-Skalierung getrennt auf 50 %, 75 % oder 100 % gesetzt werden. Auf CUDA-Systemen ist 100 % voreingestellt; auf CPU-Systemen 75 %. Die Statuszeile trennt Rechnen/Transfer von der Tk-Anzeige.
+Für normale Vorschau und Flugplan-Wiedergabe kann die Render-Skalierung getrennt auf 50 %, 75 % oder 100 % gesetzt werden. Auf CUDA-Systemen ist 100 % voreingestellt; auf CPU-Systemen 75 %. Die Statuszeile trennt Rechnen/Transfer von der Tk-Anzeige.
 
 ### MP4-Workflow
 

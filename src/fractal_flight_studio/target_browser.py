@@ -150,7 +150,7 @@ class DeepZoomTargetBrowser(tk.Toplevel):
         ttk.Button(buttons, text="Ansicht laden", command=self._load_selected).pack(
             side=tk.RIGHT, padx=(0, 6)
         )
-        ttk.Button(buttons, text="Als Flugziel", command=self._set_selected_target).pack(
+        ttk.Button(buttons, text="Mit Übergang hinzufügen", command=self._set_selected_target).pack(
             side=tk.RIGHT, padx=(0, 6)
         )
 
