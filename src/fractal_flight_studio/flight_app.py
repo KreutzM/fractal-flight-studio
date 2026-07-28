@@ -25,6 +25,8 @@ from .flight_plan_io import (
     suggested_flight_plan_name,
 )
 from .flight_plan_session import FlightPlanSession
+from .flight_plan_playback import PlaybackSample
+from .flight_playback_panel import FlightPlanPlaybackPanel
 from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
 from .models import FractalKind, RenderRequest
 from .path_editor import CameraPathDraft
@@ -43,6 +45,7 @@ class FractalStudioApp(BaseFractalStudioApp):
         self.timeline_editor: CameraPathEditorWindow | None = None
         self.export_dialog: FlightExportDialog | None = None
         self.export_controller = FlightExportController()
+        self.flight_playback_panel: FlightPlanPlaybackPanel | None = None
         self._applying_flight_plan_settings = False
         self._last_session_document_state: tuple[object, ...] | None = None
         self._path_preview_frame: EvaluatedFlightFrame | None = None
@@ -70,6 +73,7 @@ class FractalStudioApp(BaseFractalStudioApp):
         ):
             variable.trace_add("write", self._sync_primary_flight_settings)
         self._build_deep_zoom_target_bar()
+        self._build_flight_playback_bar()
 
     @property
     def camera_path(self) -> CameraPath | None:
@@ -163,6 +167,7 @@ class FractalStudioApp(BaseFractalStudioApp):
             return
         self._last_session_document_state = state
         self._path_preview_frame = None
+        self._reload_playback_document()
         path = session.camera_path
         marker = " *" if session.dirty else ""
         if path is None:
@@ -229,6 +234,119 @@ class FractalStudioApp(BaseFractalStudioApp):
         )
         self._update_deep_zoom_target_summary()
 
+    def _build_flight_playback_bar(self) -> None:
+        existing = self.root.winfo_children()
+        before = existing[0] if existing else None
+        panel = FlightPlanPlaybackPanel(
+            self.root,
+            on_sample=self._apply_playback_sample,
+            render_busy=lambda: self.render_controller.busy,
+            request_render=self.request_render,
+            keyframe_times=self._keyframe_times,
+        )
+        pack_options = {"side": tk.TOP, "fill": tk.X}
+        if before is not None:
+            pack_options["before"] = before
+        panel.pack(**pack_options)
+        panel.play_button.configure(command=self._play_flight_plan)
+        self.flight_playback_panel = panel
+        # Compatibility alias used by tests and future non-UI integrations.
+        self.flight_plan_playback = panel.controller
+        self._reload_playback_document()
+
+    def _playback_document(self):
+        if not self.flight_plan_session.valid:
+            return None
+        return self.flight_plan_session.build_document()
+
+    def _reload_playback_document(self) -> None:
+        panel = self.flight_playback_panel
+        if panel is None:
+            return
+        try:
+            playhead = float(self.flight_plan_session.playhead_time_text)
+        except ValueError:
+            playhead = 0.0
+        panel.load(self._playback_document(), playhead_seconds=playhead)
+
+    def _interactive_render_scale(self) -> float:
+        panel = self.flight_playback_panel
+        if panel is not None and panel.playing:
+            return self.flight_scale_var.get()
+        return super()._interactive_render_scale()
+
+    @staticmethod
+    def _format_playback_seconds(value: float) -> str:
+        return f"{value:.2f}".replace(".", ",")
+
+    def _apply_playback_sample(
+        self, sample: PlaybackSample, status_prefix: str
+    ) -> None:
+        self._path_preview_frame = sample.frame
+        self.camera = sample.frame.camera
+        self.flight_plan_session.set_playhead(sample.frame.time_seconds_text)
+        ending = " beendet" if sample.reached_end else ""
+        self.position_var.set(
+            f"{status_prefix}{ending} bei "
+            f"{self._format_playback_seconds(sample.playhead_seconds)} s.\n"
+            f"Breite: {sample.frame.camera.view_width_text}; "
+            f"{sample.frame.render.max_iterations} Iter.; "
+            f"{sample.frame.render.reference_bits} Bit; "
+            f"Palette {sample.frame.render.palette.description}."
+        )
+
+    def _ensure_playback_document(self) -> bool:
+        panel = self.flight_playback_panel
+        document = self._playback_document()
+        if panel is None or document is None:
+            messagebox.showinfo(
+                "Flugplan-Wiedergabe",
+                "Der Flugplan muss mindestens zwei gültige Keyframes enthalten.",
+                parent=self.root,
+            )
+            return False
+        if panel.controller.document != document:
+            try:
+                playhead = float(self.flight_plan_session.playhead_time_text)
+            except ValueError:
+                playhead = 0.0
+            panel.load(document, playhead_seconds=playhead)
+        return True
+
+    def _play_flight_plan(self) -> None:
+        if not self._ensure_playback_document():
+            return
+        if self.flight_controller.running:
+            self._stop_flight()
+        assert self.flight_playback_panel is not None
+        self.flight_playback_panel.play()
+
+    def _pause_flight_plan(self, *, request_render: bool = True) -> None:
+        if self.flight_playback_panel is not None:
+            self.flight_playback_panel.pause(request_render=request_render)
+
+    def _stop_flight_plan(self, *, request_render: bool = True) -> None:
+        if self.flight_playback_panel is not None:
+            self.flight_playback_panel.stop(request_render=request_render)
+
+    def _seek_flight_plan(self, value: str | float) -> None:
+        panel = self.flight_playback_panel
+        if panel is None or not panel.loaded:
+            return
+        try:
+            panel.seek(float(value))
+        except (TypeError, ValueError):
+            return
+
+    def _keyframe_times(self) -> tuple[float, ...]:
+        path = self.flight_plan_session.camera_path
+        if path is None:
+            return ()
+        return tuple(float(frame.time_seconds_text) for frame in path.keyframes)
+
+    def _interrupt_plan_playback(self) -> None:
+        if self.flight_playback_panel is not None:
+            self.flight_playback_panel.interrupt()
 
     def _request(self, scale: float | None = None) -> RenderRequest:
         request = super()._request(scale)
@@ -270,7 +388,11 @@ class FractalStudioApp(BaseFractalStudioApp):
         self._update_deep_zoom_target_summary()
 
     def _apply_deep_zoom_target(self, target: DeepZoomTarget, *, load_view: bool) -> None:
-        self._path_preview_frame = None
+        interrupt_playback = getattr(self, "_interrupt_plan_playback", None)
+        if interrupt_playback is not None:
+            interrupt_playback()
+        if hasattr(self, "_path_preview_frame"):
+            self._path_preview_frame = None
         if self.flight_controller.running:
             self._stop_flight()
         self.fractal_var.set(target.fractal.value)
@@ -457,6 +579,8 @@ class FractalStudioApp(BaseFractalStudioApp):
             return
         if self.flight_controller.running:
             self._stop_flight()
+        if self.flight_plan_playback.playing:
+            self._pause_flight_plan(request_render=False)
         self.export_dialog = FlightExportDialog(
             self.root,
             controller=self.export_controller,
@@ -472,26 +596,21 @@ class FractalStudioApp(BaseFractalStudioApp):
     def _ready_for_export_job(self) -> bool:
         if self.flight_controller.running:
             self._stop_flight()
+        if self.flight_plan_playback.playing:
+            self._pause_flight_plan(request_render=False)
         return not self.render_controller.busy
 
     def _preview_camera_path(self, camera: CameraState, time_seconds_text: str) -> None:
+        del camera  # The complete plan is the source of truth for camera and render state.
         if self.flight_controller.running:
             self._stop_flight()
-        frame = self.flight_plan_session.build_document().evaluate(time_seconds_text)
-        self._path_preview_frame = frame
-        self.camera = frame.camera
-        self.position_var.set(
-            f"Flugplan-Vorschau bei {frame.time_seconds_text} s.\n"
-            f"Zentrum: {frame.camera.center_x_text}, {frame.camera.center_y_text}; "
-            f"Breite: {frame.camera.view_width_text}; "
-            f"{frame.render.max_iterations} Iter.; "
-            f"{frame.render.reference_bits} Bit; "
-            f"Palette {frame.render.palette.description}."
-        )
-        self.request_render()
-
+        if not self._ensure_playback_document():
+            return
+        assert self.flight_playback_panel is not None
+        self.flight_playback_panel.preview(float(time_seconds_text))
 
     def _clear_path_preview(self) -> None:
+        self._interrupt_plan_playback()
         self._path_preview_frame = None
 
     def _zoom_event(self, event: tk.Event, factor: float) -> None:
@@ -555,6 +674,8 @@ class FractalStudioApp(BaseFractalStudioApp):
     def _on_close(self) -> None:
         if not self._confirm_discard_flight_plan_changes("dem Beenden"):
             return
+        if self.flight_playback_panel is not None:
+            self.flight_playback_panel.close()
         self.export_controller.cancel()
         self.export_controller.shutdown()
         super()._on_close()
@@ -571,6 +692,9 @@ class FractalStudioApp(BaseFractalStudioApp):
                 self.status_var.set(f"Rendergrenze erreicht: {error}")
                 if render_invalidated:
                     self.request_render()
+            panel = getattr(self, "flight_playback_panel", None)
+            if panel is not None:
+                panel.render_completed()
             return
 
         if self._should_check_flight_result(generation):
@@ -579,10 +703,16 @@ class FractalStudioApp(BaseFractalStudioApp):
                 self.render_controller.complete(generation)
                 self._restore_last_good_flight_frame(visual=visual)
                 self.request_render()
+                panel = getattr(self, "flight_playback_panel", None)
+                if panel is not None:
+                    panel.render_completed()
                 return
             self.flight_controller.accept(CameraState.from_request(request), result.rgb)
 
         super()._finish_render(future, generation, request)
+        panel = getattr(self, "flight_playback_panel", None)
+        if panel is not None:
+            panel.render_completed()
 
 
 def main() -> None:

@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Real-time flight-plan playback
+
+- Added wall-clock-based play, pause, stop, seek, keyframe navigation and playback-rate controls for complete flight plans.
+- Interactive playback evaluates the same camera, quality and palette timeline used by preflight and MP4 export.
+- Slow renderers coalesce pending requests and jump directly to the latest playhead position instead of replaying obsolete intermediate frames.
+- Manual camera interaction pauses plan playback, while timeline previews and the main playback bar share one session playhead.
+
+### Validation
+
+- Added deterministic controller tests for monotonic timing, pause/resume, seeking, rates and end-of-plan behavior.
+- Extended the Xvfb GUI smoke test to cover seek, play, pause and stop.
+
 ## 0.9.0 — 2026-07-26
 
 ### Visual deep-zoom target browser

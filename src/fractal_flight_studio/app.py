@@ -123,13 +123,19 @@ class FractalStudioApp:
     def _render_cycles(self) -> float:
         return float(self.cycles_var.get())
 
+    def _interactive_render_scale(self) -> float:
+        return (
+            self.flight_scale_var.get()
+            if self.flight_controller.running
+            else self.preview_scale_var.get()
+        )
+
     def request_render(self) -> None:
         self.render_controller.invalidate()
         if self.render_controller.busy:
             return
         try:
-            scale = self.flight_scale_var.get() if self.flight_controller.running else self.preview_scale_var.get()
-            request = self._request(scale)
+            request = self._request(self._interactive_render_scale())
             backend_name = self.backend_var.get()
             renderer = select_renderer(backend_name)
             palette = self._render_palette()
