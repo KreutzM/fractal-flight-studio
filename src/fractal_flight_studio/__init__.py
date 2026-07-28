@@ -54,6 +54,7 @@ from .flight_plan_io import (
 )
 from .flight_plan_session import FlightPlanSession
 from .flight_transition import (
+    FreeTargetValues,
     TransitionMode,
     TransitionPlan,
     TransitionSettings,
@@ -61,6 +62,7 @@ from .flight_transition import (
     end_render_profile,
     merge_render_cues,
     plan_transition,
+    suggested_target_width,
 )
 from .flight_plan_playback import (
     FlightPlanPlaybackController,
@@ -123,6 +125,7 @@ __all__ = [
     "FlightPlanFormatError",
     "FlightPlanPlaybackController",
     "FlightPlanSession",
+    "FreeTargetValues",
     "FlightScene",
     "FLIGHT_PLAN_EXTENSION",
     "FLIGHT_PLAN_FORMAT",
@@ -187,5 +190,6 @@ __all__ = [
     "serialize_flight_plan",
     "stabilize_tone_states",
     "suggested_flight_plan_name",
+    "suggested_target_width",
 ]
 __version__ = "0.9.0"
