@@ -117,6 +117,12 @@ class FractalStudioApp:
             view_width_text=self.camera.view_width_text,
         )
 
+    def _render_palette(self):
+        return self.palette_var.get()
+
+    def _render_cycles(self) -> float:
+        return float(self.cycles_var.get())
+
     def request_render(self) -> None:
         self.render_controller.invalidate()
         if self.render_controller.busy:
@@ -126,8 +132,8 @@ class FractalStudioApp:
             request = self._request(scale)
             backend_name = self.backend_var.get()
             renderer = select_renderer(backend_name)
-            palette = self.palette_var.get()
-            cycles = float(self.cycles_var.get())
+            palette = self._render_palette()
+            cycles = self._render_cycles()
         except Exception as exc:
             self.status_var.set(str(exc))
             return

@@ -78,6 +78,7 @@ class RenderRequest:
     viewport: Viewport = Viewport()
     fractal: FractalKind = FractalKind.MANDELBROT
     max_iterations: int = 400
+    color_iterations: int | None = None
     escape_radius: float = 4.0
     julia_c_real: float = -0.8
     julia_c_imag: float = 0.156
@@ -94,6 +95,15 @@ class RenderRequest:
             raise ValueError("image dimensions must be positive")
         if not 1 <= self.max_iterations <= 100_000:
             raise ValueError("max_iterations must be between 1 and 100000")
+        if self.color_iterations is not None:
+            if isinstance(self.color_iterations, bool) or not isinstance(
+                self.color_iterations, int
+            ):
+                raise ValueError("color_iterations must be an integer or None")
+            if not self.max_iterations <= self.color_iterations <= 100_000:
+                raise ValueError(
+                    "color_iterations must be between max_iterations and 100000"
+                )
         if self.escape_radius <= 1.0:
             raise ValueError("escape_radius must be greater than 1")
         if not 2 <= self.exponent <= 8:
@@ -102,3 +112,13 @@ class RenderRequest:
             raise ValueError("viewport width must be positive")
         if not 64 <= self.reference_bits <= 16384:
             raise ValueError("reference_bits must be between 64 and 16384")
+
+    @property
+    def effective_color_iterations(self) -> int:
+        """Stable iteration scale used only for coloring escaped pixels."""
+
+        return (
+            self.max_iterations
+            if self.color_iterations is None
+            else self.color_iterations
+        )

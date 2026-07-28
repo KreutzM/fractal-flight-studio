@@ -11,8 +11,9 @@ from .ffmpeg_mp4 import (
     ProgressCallback,
     encode_mp4_frames,
 )
-from .flight_path import CameraPath
+from .flight_plan import FlightSource, flight_plan_fingerprint
 from .models import RenderRequest
+from .palettes import PaletteInput
 from .offline_render import OfflineFramePlan, render_offline_frames
 from .temporal_tonemapping import (
     TemporalToneSettings,
@@ -47,14 +48,14 @@ def build_mp4_export_plan(offline_plan: OfflineFramePlan) -> Mp4ExportPlan:
 
 
 def export_path_to_mp4(
-    path: CameraPath,
+    source: FlightSource,
     request_template: RenderRequest,
     renderer,
     offline_plan: OfflineFramePlan,
     output_path: str | Path,
     settings: Mp4ExportSettings = Mp4ExportSettings(),
     *,
-    palette: str = "inferno",
+    palette: PaletteInput = "inferno",
     cycles: float = 1.0,
     phase: float = 0.0,
     tone_mapping: str = "auto",
@@ -73,7 +74,7 @@ def export_path_to_mp4(
     tone_scene_key = None
     if temporal_tone.mode is ToneStability.TEMPORAL and tone_mapping != "linear":
         tone_states = analyze_offline_tone_states(
-            path,
+            source,
             request_template,
             renderer,
             offline_plan,
@@ -88,16 +89,19 @@ def export_path_to_mp4(
         )
         tone_state_locked = any(state is not None for state in tone_states)
         if tone_state_locked:
-            tone_scene_key = offline_tone_scene_key(
-                request_template,
-                tone_mapping,
-                palette,
-                cycles,
-                phase,
+            tone_scene_key = (
+                offline_tone_scene_key(
+                    request_template,
+                    tone_mapping,
+                    palette,
+                    cycles,
+                    phase,
+                ),
+                flight_plan_fingerprint(source),
             )
 
     frames = render_offline_frames(
-        path,
+        source,
         request_template,
         renderer,
         offline_plan,

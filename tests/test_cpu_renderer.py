@@ -45,3 +45,27 @@ def test_float32_and_float64_are_close_for_normal_view(renderer):
     b = renderer.render(replace(request, precision=Precision.FLOAT64))
     agreement = np.mean(a.inside == b.inside)
     assert agreement > 0.995
+
+
+def test_escape_values_remain_stable_when_only_iteration_limit_increases(renderer):
+    low_request = RenderRequest(
+        width=96,
+        height=64,
+        max_iterations=80,
+        color_iterations=160,
+        precision=Precision.FLOAT64,
+    )
+    high_request = replace(low_request, max_iterations=160)
+
+    low = renderer.render(low_request)
+    high = renderer.render(high_request)
+    escaped_with_low_limit = ~low.inside
+
+    assert np.any(escaped_with_low_limit)
+    assert np.array_equal(high.inside[escaped_with_low_limit], low.inside[escaped_with_low_limit])
+    assert np.allclose(
+        high.values[escaped_with_low_limit],
+        low.values[escaped_with_low_limit],
+        rtol=0.0,
+        atol=1e-7,
+    )

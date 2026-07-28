@@ -13,12 +13,12 @@ from .export_controller import (
     flight_export_fingerprint,
 )
 from .ffmpeg_mp4 import Mp4ExportCancelled, Mp4ExportResult
-from .flight_path import CameraPath
+from .flight_plan import FlightSource
 from .models import RenderRequest
 from .preflight import PreflightCancelled, PreflightReport
 
 
-PathGetter = Callable[[], CameraPath | None]
+PathGetter = Callable[[], FlightSource | None]
 RequestBuilder = Callable[[], RenderRequest]
 RendererGetter = Callable[[], object]
 StringGetter = Callable[[], str]

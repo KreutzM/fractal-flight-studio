@@ -15,8 +15,9 @@ from .ffmpeg_mp4 import (
     Mp4ExportSettings,
     probe_ffmpeg,
 )
-from .flight_path import CameraPath
+from .flight_plan import FlightSource, flight_plan_fingerprint
 from .models import RenderRequest
+from .palettes import PaletteInput, palette_cache_key
 from .mp4_export import build_mp4_export_plan, export_path_to_mp4
 from .offline_render import (
     OfflineFramePlan,
@@ -147,11 +148,11 @@ class FlightExportConfiguration:
             smoothing=self.tone_smoothing,
         )
 
-    def build_offline_plan(self, path: CameraPath) -> OfflineFramePlan:
-        return build_offline_frame_plan(path, self.offline_settings())
+    def build_offline_plan(self, source: FlightSource) -> OfflineFramePlan:
+        return build_offline_frame_plan(source, self.offline_settings())
 
-    def export_frame_count(self, path: CameraPath) -> int:
-        return build_mp4_export_plan(self.build_offline_plan(path)).frame_count
+    def export_frame_count(self, source: FlightSource) -> int:
+        return build_mp4_export_plan(self.build_offline_plan(source)).frame_count
 
     def preflight_fingerprint(self) -> tuple[object, ...]:
         numerator, denominator = self.frame_rate
@@ -192,27 +193,15 @@ def parse_frame_rate(text: str) -> tuple[int, int]:
 
 
 def flight_export_fingerprint(
-    path: CameraPath,
+    source: FlightSource,
     request: RenderRequest,
     renderer_name: str,
-    palette: str,
+    palette: PaletteInput,
     cycles: float,
     configuration: FlightExportConfiguration,
 ) -> tuple[object, ...]:
-    keyframes = tuple(
-        (
-            frame.time_seconds_text,
-            frame.camera.center_x_text,
-            frame.camera.center_y_text,
-            frame.camera.view_width_text,
-            frame.easing.value,
-            frame.center_interpolation.value,
-        )
-        for frame in path.keyframes
-    )
     return (
-        path.digits,
-        keyframes,
+        flight_plan_fingerprint(source),
         request.fractal.value,
         request.max_iterations,
         request.escape_radius,
@@ -223,7 +212,7 @@ def flight_export_fingerprint(
         request.render_mode.value,
         request.reference_bits,
         renderer_name,
-        palette,
+        palette_cache_key(palette),
         cycles,
         configuration.preflight_fingerprint(),
     )
@@ -268,16 +257,16 @@ class FlightExportController:
 
     def start_preflight(
         self,
-        path: CameraPath,
+        source: FlightSource,
         request_template: RenderRequest,
         renderer,
         settings: PreflightSettings,
         *,
-        palette: str,
+        palette: PaletteInput,
         cycles: float,
         tone_mapping: str = "auto",
     ) -> Future[PreflightReport]:
-        total = len(build_preflight_plan(path, settings).sample_times_text)
+        total = len(build_preflight_plan(source, settings).sample_times_text)
 
         def update(sample, sample_total: int) -> None:
             self._set_progress(
@@ -289,7 +278,7 @@ class FlightExportController:
 
         def job() -> PreflightReport:
             return run_path_preflight(
-                path,
+                source,
                 request_template,
                 renderer,
                 settings,
@@ -309,14 +298,14 @@ class FlightExportController:
 
     def start_mp4(
         self,
-        path: CameraPath,
+        source: FlightSource,
         request_template: RenderRequest,
         renderer,
         offline_plan: OfflineFramePlan,
         output_path: str | Path,
         settings: Mp4ExportSettings,
         *,
-        palette: str,
+        palette: PaletteInput,
         cycles: float,
         tone_mapping: str = "auto",
         temporal_tone: TemporalToneSettings = TemporalToneSettings(
@@ -348,7 +337,7 @@ class FlightExportController:
 
         def job() -> Mp4ExportResult:
             return export_path_to_mp4(
-                path,
+                source,
                 request_template,
                 renderer,
                 offline_plan,

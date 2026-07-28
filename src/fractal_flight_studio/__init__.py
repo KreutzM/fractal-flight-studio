@@ -29,6 +29,8 @@ from .flight_path import (
     FlightKeyframe,
 )
 from .flight_plan import (
+    EvaluatedFlightFrame,
+    EvaluatedRenderState,
     FlightPlanDefaults,
     FlightPlanDocument,
     FlightScene,
@@ -52,6 +54,7 @@ from .flight_plan_io import (
 )
 from .flight_plan_session import FlightPlanSession
 from .models import FractalKind, Precision, RenderMode, RenderRequest, Viewport
+from .palettes import PaletteBlend
 from .mp4_export import build_mp4_export_plan, export_path_to_mp4
 from .path_editor import CameraPathDraft
 from .offline_render import (
@@ -90,6 +93,8 @@ __all__ = [
     "CameraState",
     "CenterInterpolation",
     "Easing",
+    "EvaluatedFlightFrame",
+    "EvaluatedRenderState",
     "FFmpegInfo",
     "FFmpegNotFoundError",
     "FFmpegProbeError",
@@ -120,6 +125,7 @@ __all__ = [
     "OfflineFrameRenderError",
     "OfflineRenderSettings",
     "Precision",
+    "PaletteBlend",
     "PaletteTransition",
     "PreflightCancelled",
     "PreflightIssue",

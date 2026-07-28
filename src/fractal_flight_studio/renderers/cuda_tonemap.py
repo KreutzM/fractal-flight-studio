@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 import time
 
@@ -7,6 +8,7 @@ import numpy as np
 from numba import cuda, float32
 
 from ..models import FractalKind, RenderRequest
+from ..palettes import PaletteInput
 from ..tonemapping import resolve_locked_tone_state, resolve_tone_state, sample_grid
 from .base import FrameResult
 from .cuda import CudaRenderer as _BaseCudaRenderer
@@ -101,6 +103,25 @@ def _tone_colorize_kernel(
 class CudaRenderer(_BaseCudaRenderer):
     """CUDA renderer with automatic tone analysis and GPU-side colorization."""
 
+    @staticmethod
+    def _stable_color_request(request: RenderRequest) -> RenderRequest:
+        """Use the flight-wide color scale as CUDA's conservative loop limit.
+
+        The legacy CUDA kernels normalize escaped values by their loop limit.
+        Raising that limit only for frames near a deep target would therefore
+        recolor all previously escaped pixels. Until those kernels expose a
+        separate color scale, evaluating the global scale is the correct and
+        deterministic fallback.
+        """
+
+        if request.max_iterations == request.effective_color_iterations:
+            return request
+        return replace(
+            request,
+            max_iterations=request.effective_color_iterations,
+            color_iterations=request.effective_color_iterations,
+        )
+
     def __init__(self) -> None:
         super().__init__()
         self._sample_values_device = None
@@ -124,18 +145,20 @@ class CudaRenderer(_BaseCudaRenderer):
             request.fractal.value,
             request.precision.value,
             request.render_mode.value,
-            request.reference_bits,
-            request.max_iterations,
+            request.effective_color_iterations,
             request.exponent,
             request.julia_c_real,
             request.julia_c_imag,
             tone_mapping,
         )
 
+    def render(self, request: RenderRequest):
+        return super().render(self._stable_color_request(request))
+
     def render_frame(
         self,
         request: RenderRequest,
-        palette: str = "inferno",
+        palette: PaletteInput = "inferno",
         cycles: float = 1.0,
         phase: float = 0.0,
         tone_mapping: str = "auto",
@@ -144,6 +167,7 @@ class CudaRenderer(_BaseCudaRenderer):
         tone_smoothing: float = 0.16,
         tone_state_locked: bool = False,
     ) -> FrameResult:
+        request = self._stable_color_request(request)
         request.validate()
         if cycles <= 0:
             raise ValueError("cycles must be positive")

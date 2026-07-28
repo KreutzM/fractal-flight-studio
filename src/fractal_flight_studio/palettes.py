@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, TypeAlias
 
 import numpy as np
 
@@ -44,11 +45,62 @@ _PALETTES: dict[str, tuple[tuple[float, tuple[int, int, int]], ...]] = {
 }
 
 
+@dataclass(frozen=True, slots=True)
+class PaletteBlend:
+    """One deterministic palette lookup, optionally blended between two LUTs."""
+
+    source: str
+    target: str | None = None
+    mix: float = 0.0
+
+    def __post_init__(self) -> None:
+        if self.source not in _PALETTES:
+            raise ValueError(f"unknown source palette {self.source!r}")
+        target = self.source if self.target is None else self.target
+        if target not in _PALETTES:
+            raise ValueError(f"unknown target palette {target!r}")
+        if not 0.0 <= float(self.mix) <= 1.0:
+            raise ValueError("palette blend mix must be in the interval [0, 1]")
+        object.__setattr__(self, "target", target)
+        object.__setattr__(self, "mix", float(self.mix))
+
+    @classmethod
+    def solid(cls, name: str) -> "PaletteBlend":
+        return cls(name, name, 0.0)
+
+    @property
+    def is_solid(self) -> bool:
+        return self.source == self.target or self.mix <= 0.0
+
+    @property
+    def cache_key(self) -> tuple[str, str, float]:
+        assert self.target is not None
+        return self.source, self.target, round(self.mix, 15)
+
+    @property
+    def description(self) -> str:
+        if self.is_solid:
+            return self.source
+        assert self.target is not None
+        return f"{self.source}→{self.target} ({self.mix:.1%})"
+
+
+PaletteInput: TypeAlias = str | PaletteBlend
+
+
 def palette_names() -> tuple[str, ...]:
     return tuple(_PALETTES)
 
 
-def palette_lut(name: str, size: int = 2048) -> np.ndarray:
+def palette_cache_key(palette: PaletteInput) -> tuple[str, str, float]:
+    if isinstance(palette, PaletteBlend):
+        return palette.cache_key
+    if palette not in _PALETTES:
+        raise KeyError(f"unknown palette: {palette}")
+    return palette, palette, 0.0
+
+
+def _named_palette_lut(name: str, size: int) -> np.ndarray:
     if name not in _PALETTES:
         raise KeyError(f"unknown palette: {name}")
     stops = _PALETTES[name]
@@ -61,18 +113,29 @@ def palette_lut(name: str, size: int = 2048) -> np.ndarray:
     return np.clip(lut, 0, 255).astype(np.uint8)
 
 
+def palette_lut(palette: PaletteInput, size: int = 2048) -> np.ndarray:
+    if size < 2:
+        raise ValueError("palette LUT size must be at least two")
+    if isinstance(palette, str):
+        return _named_palette_lut(palette, size)
+    source = _named_palette_lut(palette.source, size)
+    if palette.is_solid:
+        return source
+    assert palette.target is not None
+    target = _named_palette_lut(palette.target, size)
+    mixed = source.astype(np.float32) * (1.0 - palette.mix)
+    mixed += target.astype(np.float32) * palette.mix
+    return np.clip(np.rint(mixed), 0, 255).astype(np.uint8)
+
+
 def colorize(
     values: np.ndarray,
     inside: np.ndarray,
-    palette: str = "inferno",
+    palette: PaletteInput = "inferno",
     cycles: float = 1.0,
     phase: float = 0.0,
 ) -> np.ndarray:
-    """Map normalized values to RGB using a fixed palette.
-
-    This is the low-level linear palette lookup used by the optimized CUDA frame
-    path. For automatic contrast enhancement, use :func:`tone_mapped_colorize`.
-    """
+    """Map normalized values to RGB using a fixed or blended palette LUT."""
     if values.shape != inside.shape:
         raise ValueError("values and inside masks must have the same shape")
     if cycles <= 0:
@@ -89,7 +152,7 @@ def colorize(
 def tone_mapped_colorize(
     values: np.ndarray,
     inside: np.ndarray,
-    palette: str = "inferno",
+    palette: PaletteInput = "inferno",
     cycles: float = 1.0,
     phase: float = 0.0,
     tone_mapping: str = "auto",
