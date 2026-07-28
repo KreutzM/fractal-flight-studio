@@ -69,6 +69,11 @@ def main() -> int:
     assert free_dialog is not None
     root.update_idletasks()
     assert free_dialog.current_plan is not None
+    assert free_dialog.width_var.get() == source_camera.view_width_text
+    assert (
+        free_dialog.current_plan.keyframes[-1].camera.view_width_text
+        == source_camera.view_width_text
+    )
     free_dialog._accept(play=False)
     assert app.flight_plan_session.valid
     assert app.camera_path is not None
