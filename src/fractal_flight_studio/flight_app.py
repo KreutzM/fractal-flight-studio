@@ -16,6 +16,7 @@ from .flight_plan import (
     EvaluatedFlightFrame,
     FlightPlanDefaults,
     FlightScene,
+    PaletteTransition,
     RenderProfile,
 )
 from .flight_plan_io import (
@@ -26,12 +27,24 @@ from .flight_plan_io import (
 )
 from .flight_plan_session import FlightPlanSession
 from .flight_plan_playback import PlaybackSample
+from .flight_transition import (
+    FreeTargetValues,
+    TransitionMode,
+    TransitionPlan,
+    TransitionSettings,
+    TransitionTarget,
+    end_render_profile,
+    plan_transition,
+    suggested_target_width,
+)
+from .free_target_dialog import FreeTargetTransitionDialog
 from .flight_playback_panel import FlightPlanPlaybackPanel
 from .flight_quality import FrameVisualQuality, analyze_frame_visual_quality
 from .models import FractalKind, RenderRequest
 from .path_editor import CameraPathDraft
 from .target_browser import DeepZoomTargetBrowser
 from .timeline_editor import CameraPathEditorWindow
+from .transition_dialog import TargetTransitionDialog
 from .renderers import available_renderers, select_renderer
 
 
@@ -46,6 +59,8 @@ class FractalStudioApp(BaseFractalStudioApp):
         self.export_dialog: FlightExportDialog | None = None
         self.export_controller = FlightExportController()
         self.flight_playback_panel: FlightPlanPlaybackPanel | None = None
+        self.catalog_transition_dialog: TargetTransitionDialog | None = None
+        self.free_target_dialog: FreeTargetTransitionDialog | None = None
         self._applying_flight_plan_settings = False
         self._last_session_document_state: tuple[object, ...] | None = None
         self._path_preview_frame: EvaluatedFlightFrame | None = None
@@ -204,7 +219,7 @@ class FractalStudioApp(BaseFractalStudioApp):
         )
         combo.pack(side=tk.LEFT, padx=(6, 6))
         combo.bind("<<ComboboxSelected>>", self._on_deep_zoom_target_selected)
-        ttk.Button(bar, text="Als Flugziel", command=self.set_catalog_flight_target).pack(
+        ttk.Button(bar, text="Mit Übergang hinzufügen", command=self.set_catalog_flight_target).pack(
             side=tk.LEFT, padx=(0, 4)
         )
         ttk.Button(bar, text="Ansicht laden", command=self.load_catalog_target_view).pack(
@@ -397,39 +412,144 @@ class FractalStudioApp(BaseFractalStudioApp):
         self._update_deep_zoom_target_summary()
 
     def _apply_deep_zoom_target(self, target: DeepZoomTarget, *, load_view: bool) -> None:
-        interrupt_playback = getattr(self, "_interrupt_plan_playback", None)
-        if interrupt_playback is not None:
-            interrupt_playback()
-        if hasattr(self, "_path_preview_frame"):
-            self._path_preview_frame = None
-        if self.flight_controller.running:
-            self._stop_flight()
+        """Load a catalog view without creating a second flight mechanism."""
+
+        clear_preview = getattr(self, "_clear_path_preview", None)
+        if clear_preview is not None:
+            clear_preview()
         self.fractal_var.set(target.fractal.value)
         self.iterations_var.set(target.recommended_iterations)
         self.reference_bits_var.set(target.reference_bits)
         self.palette_var.set(target.palette)
-        self.flight_controller.set_target(target.center_x_text, target.center_y_text)
-
-        action = "als Flugziel gesetzt"
         if load_view:
             self.camera = CameraState(
                 target.center_x_text,
                 target.center_y_text,
                 target.view_width_text,
             )
-            action = "geladen und als Flugziel gesetzt"
             self.request_render()
-
         self.position_var.set(
-            f"{target.name} {action}.\n"
+            f"{target.name} als Ansicht geladen.\n"
             f"Zentrum: {target.center_x_text}, {target.center_y_text}; "
             f"Breite: {target.view_width_text}"
+        )
+
+    def _transition_source(self) -> tuple[CameraState, str, RenderProfile, bool]:
+        draft = self.flight_plan_session.camera_draft
+        path = self.flight_plan_session.camera_path
+        if path is None:
+            if len(draft.keyframes) > 1:
+                raise ValueError(
+                    "Der aktuelle Flugplanentwurf ist ungültig. Repariere ihn zuerst im Flugplan-Editor."
+                )
+            return self.camera, "0", self._current_render_profile(), True
+        frame = path.keyframes[-1]
+        state = self.flight_plan_session.render_track.evaluate(frame.time_seconds_text)
+        return (
+            frame.camera,
+            frame.time_seconds_text,
+            end_render_profile(render_state=state),
+            False,
+        )
+
+    def _transition_settings(self) -> TransitionSettings:
+        aspect = max(
+            0.1,
+            max(1, self.canvas.winfo_width())
+            / max(1, self.canvas.winfo_height()),
+        )
+        return TransitionSettings(aspect_ratio_text=repr(aspect))
+
+    def _build_catalog_transition(
+        self,
+        target: DeepZoomTarget,
+        mode: TransitionMode,
+        palette_transition: PaletteTransition,
+    ) -> TransitionPlan:
+        source_camera, start_time, source_profile, _initial = self._transition_source()
+        transition_target = TransitionTarget.from_deep_zoom_target(
+            target,
+            scene=self.flight_plan_session.scene,
+            cycles_text=source_profile.cycles_text,
+        )
+        return plan_transition(
+            source_camera,
+            source_profile,
+            transition_target,
+            start_time_text=start_time,
+            digits=self.flight_plan_session.camera_draft.digits,
+            requested_mode=mode,
+            palette_transition=palette_transition,
+            settings=self._transition_settings(),
+        )
+
+    def _build_free_transition(
+        self,
+        values: FreeTargetValues,
+        mode: TransitionMode,
+        palette_transition: PaletteTransition,
+    ) -> TransitionPlan:
+        source_camera, start_time, source_profile, _initial = self._transition_source()
+        target_camera = CameraState(
+            values.center_x_text,
+            values.center_y_text,
+            values.view_width_text,
+        )
+        target_camera.values(digits=self.flight_plan_session.camera_draft.digits)
+        target_profile = RenderProfile(
+            values.max_iterations,
+            values.reference_bits,
+            values.palette,
+            values.cycles_text,
+        )
+        target = TransitionTarget(
+            "Freies Ziel",
+            target_camera,
+            target_profile,
+            self.flight_plan_session.scene,
+        )
+        return plan_transition(
+            source_camera,
+            source_profile,
+            target,
+            start_time_text=start_time,
+            digits=self.flight_plan_session.camera_draft.digits,
+            requested_mode=mode,
+            palette_transition=palette_transition,
+            settings=self._transition_settings(),
+        )
+
+    def _apply_transition(self, plan: TransitionPlan, play: bool = False) -> None:
+        initialize = self.flight_plan_session.camera_path is None
+        self.flight_plan_session.append_transition(
+            plan,
+            initialize_if_needed=initialize,
+        )
+        self.position_var.set(
+            f"Flugziel hinzugefügt: {plan.summary}.\n"
+            f"Ankunft bei {plan.arrival_time_text} s; Ende bei {plan.end_time_text} s."
+        )
+        if self.timeline_editor is not None and self.timeline_editor.winfo_exists():
+            self.timeline_editor._refresh_tree(select_time=plan.arrival_time_text)
+        if play:
+            self._play_flight_plan_from(plan.start_time_text)
+
+    def _open_catalog_transition_dialog(self, target: DeepZoomTarget) -> None:
+        dialog = self.catalog_transition_dialog
+        if dialog is not None and dialog.winfo_exists():
+            dialog.destroy()
+        self.catalog_transition_dialog = TargetTransitionDialog(
+            self.root,
+            targets=self.all_deep_zoom_targets,
+            initial_target_name=target.name,
+            build_plan=self._build_catalog_transition,
+            apply_plan=self._apply_transition,
         )
 
     def set_catalog_flight_target(self) -> None:
         target = self._selected_deep_zoom_target()
         if target is not None:
-            self._apply_deep_zoom_target(target, load_view=False)
+            self._open_catalog_transition_dialog(target)
 
     def load_catalog_target_view(self) -> None:
         target = self._selected_deep_zoom_target()
@@ -440,7 +560,10 @@ class FractalStudioApp(BaseFractalStudioApp):
         if target.name in self.deep_zoom_targets_by_name:
             self.deep_zoom_target_var.set(target.name)
             self._update_deep_zoom_target_summary()
-        self._apply_deep_zoom_target(target, load_view=load_view)
+        if load_view:
+            self._apply_deep_zoom_target(target, load_view=True)
+        else:
+            self._open_catalog_transition_dialog(target)
 
     def open_target_browser(self) -> None:
         if self.target_browser is not None and self.target_browser.winfo_exists():
@@ -635,7 +758,36 @@ class FractalStudioApp(BaseFractalStudioApp):
 
     def _set_flight_target(self, event: tk.Event) -> None:
         self._clear_path_preview()
-        super()._set_flight_target(event)
+        x, y = self._pixel_to_complex_hp(event.x, event.y)
+        source_camera, _start, source_profile, _initial = self._transition_source()
+        initial_values = FreeTargetValues(
+            self._format_precise(x),
+            self._format_precise(y),
+            suggested_target_width(
+                self.camera,
+                digits=self.flight_plan_session.camera_draft.digits,
+            ),
+            source_profile.max_iterations,
+            source_profile.reference_bits,
+            source_profile.palette,
+            source_profile.cycles_text,
+        )
+        dialog = self.free_target_dialog
+        if dialog is not None and dialog.winfo_exists():
+            dialog.destroy()
+        self.free_target_dialog = FreeTargetTransitionDialog(
+            self.root,
+            initial_values=initial_values,
+            build_plan=self._build_free_transition,
+            apply_plan=self._apply_transition,
+        )
+
+    def _show_coordinate(self, event: tk.Event) -> None:
+        x, y = self._pixel_to_complex_hp(event.x, event.y)
+        self.position_var.set(
+            f"Cursor: {self._format_display(x, 12)}, {self._format_display(y, 12)}\n"
+            "Rechtsklick: nächstes Flugziel vorschlagen"
+        )
 
     def toggle_flight(self) -> None:
         self._clear_path_preview()
@@ -688,6 +840,9 @@ class FractalStudioApp(BaseFractalStudioApp):
             return
         if self.flight_playback_panel is not None:
             self.flight_playback_panel.close()
+        for dialog in (self.catalog_transition_dialog, self.free_target_dialog):
+            if dialog is not None and dialog.winfo_exists():
+                dialog.destroy()
         self.export_controller.cancel()
         self.export_controller.shutdown()
         super()._on_close()
