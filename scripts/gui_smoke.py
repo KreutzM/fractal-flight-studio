@@ -139,6 +139,18 @@ def main() -> int:
     export_dialog.destroy()
     root.update_idletasks()
 
+    assert app.flight_plan_playback.loaded
+    app._seek_flight_plan(0.5)
+    assert float(app.flight_plan_session.playhead_time_text) == 0.5
+    assert app.camera == app.flight_plan_session.build_document().evaluate("0.5").camera
+    app._play_flight_plan()
+    assert app.flight_plan_playback.playing
+    app._pause_flight_plan(request_render=False)
+    assert app.flight_plan_playback.paused
+    app._stop_flight_plan(request_render=False)
+    assert app.flight_plan_playback.state.value == "stopped"
+    assert app.flight_plan_playback.playhead_seconds == 0.0
+
     app._on_close()
     return 0
 
