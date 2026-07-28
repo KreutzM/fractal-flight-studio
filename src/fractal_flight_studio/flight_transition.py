@@ -12,13 +12,14 @@ from .flight_path import CenterInterpolation, Easing, FlightKeyframe
 from .flight_plan import (
     FlightScene,
     PaletteTransition,
+    EvaluatedRenderState,
     RenderCue,
     RenderProfile,
 )
 
 
 class TransitionMode(str, Enum):
-    """Available camera-routing strategies for one appended target."""
+    """Camera-routing strategy between two flight targets."""
 
     AUTO = "auto"
     DIRECT = "direct"
@@ -29,11 +30,11 @@ class TransitionMode(str, Enum):
 
 @dataclass(frozen=True, slots=True)
 class TransitionTarget:
-    """One exact camera and render-profile destination."""
+    """Portable destination used by the pure transition planner."""
 
     name: str
     camera: CameraState
-    render_profile: RenderProfile
+    profile: RenderProfile
     scene: FlightScene
 
     @classmethod
@@ -43,7 +44,11 @@ class TransitionTarget:
         *,
         scene: FlightScene,
         cycles_text: str = "1",
-    ) -> TransitionTarget:
+    ) -> "TransitionTarget":
+        if target.fractal != scene.fractal:
+            raise ValueError(
+                "target fractal does not match the flight-plan scene; use a separate plan for scene changes"
+            )
         return cls(
             target.name,
             CameraState(
@@ -88,86 +93,35 @@ class TransitionSettings:
     bridge_margin_text: str = "1.35"
     direct_distance_threshold_text: str = "0.85"
     overview_threshold_text: str = "0.78"
-    minimum_segment_seconds_text: str = "0.35"
-    maximum_segment_seconds_text: str = "12"
 
     def values(self, *, digits: int) -> tuple[mp.mpf, ...]:
         with mp.workdps(digits):
-            aspect = _positive_decimal(self.aspect_ratio_text, "aspect ratio", digits=digits)
-            zoom_speed = _positive_decimal(
-                self.zoom_stops_per_second_text,
-                "zoom speed",
-                digits=digits,
-            )
-            pan_speed = _positive_decimal(
-                self.pan_viewports_per_second_text,
-                "pan speed",
-                digits=digits,
-            )
-            hold_before = _non_negative_decimal(
-                self.hold_before_text,
-                "hold before",
-                digits=digits,
-            )
-            hold_after = _non_negative_decimal(
-                self.hold_after_text,
-                "hold after",
-                digits=digits,
-            )
-            cut_seconds = _positive_decimal(
-                self.cut_seconds_text,
-                "cut duration",
-                digits=digits,
-            )
-            bridge_margin = _positive_decimal(
-                self.bridge_margin_text,
-                "bridge margin",
-                digits=digits,
-            )
-            direct_threshold = _positive_decimal(
-                self.direct_distance_threshold_text,
-                "direct distance threshold",
-                digits=digits,
-            )
-            overview_threshold = _positive_decimal(
-                self.overview_threshold_text,
-                "overview threshold",
-                digits=digits,
-            )
-            minimum_segment = _positive_decimal(
-                self.minimum_segment_seconds_text,
-                "minimum segment duration",
-                digits=digits,
-            )
-            maximum_segment = _positive_decimal(
-                self.maximum_segment_seconds_text,
-                "maximum segment duration",
-                digits=digits,
-            )
-            if overview_threshold > 1:
-                raise ValueError("overview threshold must not exceed one")
-            if maximum_segment < minimum_segment:
-                raise ValueError(
-                    "maximum segment duration must be at least the minimum"
+            values = tuple(
+                _positive_decimal(text, label, digits=digits)
+                for text, label in (
+                    (self.aspect_ratio_text, "aspect ratio"),
+                    (self.zoom_stops_per_second_text, "zoom speed"),
+                    (self.pan_viewports_per_second_text, "pan speed"),
+                    (self.hold_before_text, "hold-before duration"),
+                    (self.hold_after_text, "hold-after duration"),
+                    (self.cut_seconds_text, "cut duration"),
+                    (self.bridge_margin_text, "bridge margin"),
+                    (
+                        self.direct_distance_threshold_text,
+                        "direct transition threshold",
+                    ),
+                    (self.overview_threshold_text, "overview threshold"),
                 )
-            return (
-                aspect,
-                zoom_speed,
-                pan_speed,
-                hold_before,
-                hold_after,
-                cut_seconds,
-                bridge_margin,
-                direct_threshold,
-                overview_threshold,
-                minimum_segment,
-                maximum_segment,
             )
+            if values[-1] > 1:
+                raise ValueError("overview threshold must not exceed one")
+            self.overview_camera.values(digits=digits)
+            return values
 
 
 @dataclass(frozen=True, slots=True)
 class TransitionPlan:
-    """Deterministic camera and render-cue additions for one destination."""
+    """Absolute keyframes and render cues that can be appended atomically."""
 
     source_camera: CameraState
     source_profile: RenderProfile
@@ -181,37 +135,76 @@ class TransitionPlan:
     render_cues: tuple[RenderCue, ...]
     bridge_width_text: str | None
     target_name: str
-    digits: int = 80
+    digits: int
+
+    @property
+    def duration_text(self) -> str:
+        with mp.workdps(self.digits):
+            duration = mp.mpf(self.end_time_text) - mp.mpf(self.start_time_text)
+            return _format_decimal(duration, digits=self.digits)
+
+    @property
+    def intermediate_keyframe_count(self) -> int:
+        # Exclude the target arrival and final hold from the route summary.
+        return max(0, len(self.keyframes) - 2)
+
+    @property
+    def summary(self) -> str:
+        bridge = (
+            ""
+            if self.bridge_width_text is None
+            else f"; Brückenbreite {mp.nstr(mp.mpf(self.bridge_width_text), 6)}"
+        )
+        return (
+            f"{self.mode.value}: {self.duration_text} s; "
+            f"{self.intermediate_keyframe_count} Zwischen-Keyframes{bridge}"
+        )
 
     def __post_init__(self) -> None:
+        if self.digits < 20:
+            raise ValueError("transition precision must be at least 20 digits")
         if not self.keyframes:
-            raise ValueError("a transition plan requires camera keyframes")
+            raise ValueError("transition plan requires camera keyframes")
         with mp.workdps(self.digits):
             start = mp.mpf(self.start_time_text)
             arrival = mp.mpf(self.arrival_time_text)
             end = mp.mpf(self.end_time_text)
-            if arrival < start:
-                raise ValueError("arrival time must not precede transition start")
-            if end < arrival:
-                raise ValueError("transition end must not precede arrival")
-            if self.keyframes[0].time_seconds(digits=self.digits) < start:
-                raise ValueError("transition keyframes must not precede start time")
-            if self.keyframes[-1].time_seconds(digits=self.digits) != end:
-                raise ValueError("last transition keyframe must match end time")
+            if not (start < arrival <= end):
+                raise ValueError("transition times must satisfy start < arrival <= end")
+            key_times = tuple(
+                frame.time_seconds(digits=self.digits) for frame in self.keyframes
+            )
+            if any(value <= start for value in key_times):
+                raise ValueError("transition keyframes must follow the start time")
+            if any(right <= left for left, right in zip(key_times, key_times[1:])):
+                raise ValueError("transition keyframe times must be strictly increasing")
+            if key_times[-1] != end:
+                raise ValueError("last transition keyframe must end the transition")
+            cue_times = tuple(
+                cue.time_seconds(digits=self.digits) for cue in self.render_cues
+            )
+            if cue_times and (cue_times[0] != start or cue_times[-1] != arrival):
+                raise ValueError("transition render cues must anchor start and arrival")
 
-    @property
-    def summary(self) -> str:
-        route = self.mode.value
-        count = len(self.keyframes)
-        bridge = (
-            f", Brückenbreite {self.bridge_width_text}"
-            if self.bridge_width_text is not None
-            else ""
-        )
-        return (
-            f"{route}: {count} neue Keyframes, "
-            f"Ankunft {self.arrival_time_text} s, Ende {self.end_time_text} s{bridge}"
-        )
+
+def end_render_profile(
+    *,
+    render_state: EvaluatedRenderState,
+) -> RenderProfile:
+    """Convert an evaluated end state back into one exact source profile."""
+
+    palette = (
+        render_state.palette.target
+        if render_state.palette.mix >= 1.0
+        else render_state.palette.source
+    )
+    assert palette is not None
+    return RenderProfile(
+        render_state.max_iterations,
+        render_state.reference_bits,
+        palette,
+        render_state.cycles_text,
+    )
 
 
 def plan_transition(
@@ -220,23 +213,23 @@ def plan_transition(
     target: TransitionTarget,
     *,
     start_time_text: str,
+    digits: int = 80,
     requested_mode: TransitionMode | str = TransitionMode.AUTO,
     palette_transition: PaletteTransition | str = PaletteTransition.BLEND,
     settings: TransitionSettings = TransitionSettings(),
-    digits: int = 80,
 ) -> TransitionPlan:
-    """Plan one deterministic, append-only target transition."""
+    """Build a deterministic route from the current path end to one target.
+
+    The planner uses exact decimal arithmetic for positions, widths and timing.
+    It chooses the smallest useful bridge view in ``auto`` mode and only routes
+    through the full overview when that bridge is already close to the root view.
+    """
 
     requested = TransitionMode(requested_mode)
     palette_mode = PaletteTransition(palette_transition)
-    if target.scene.fractal != target.scene.fractal:
-        raise ValueError("target scene is invalid")
-
     with mp.workdps(digits):
         start_time = _non_negative_decimal(
-            start_time_text,
-            "transition start time",
-            digits=digits,
+            start_time_text, "transition start time", digits=digits
         )
         source_x, source_y, source_width = source_camera.values(digits=digits)
         target_x, target_y, target_width = target.camera.values(digits=digits)
@@ -250,8 +243,6 @@ def plan_transition(
             bridge_margin,
             direct_threshold,
             overview_threshold,
-            minimum_segment,
-            maximum_segment,
         ) = settings.values(digits=digits)
         overview_x, overview_y, overview_width = settings.overview_camera.values(
             digits=digits
@@ -259,14 +250,15 @@ def plan_transition(
 
         dx = abs(target_x - source_x)
         dy = abs(target_y - source_y)
-        screen_distance = max(dx, dy * aspect)
+        screen_distance = max(dx, aspect * dy)
         reference_width = max(source_width, target_width)
         normalized_distance = screen_distance / reference_width
+        required_bridge = bridge_margin * (
+            screen_distance + (source_width + target_width) / 2
+        )
         required_bridge = max(
-            source_width,
-            target_width,
-            (screen_distance + (source_width + target_width) / 2)
-            * bridge_margin,
+            required_bridge,
+            reference_width * mp.mpf("1.2"),
         )
         bridge_width = min(required_bridge, overview_width)
 
@@ -279,147 +271,129 @@ def plan_transition(
             else:
                 mode = TransitionMode.BRIDGE
 
-        frames: list[FlightKeyframe] = []
         current = start_time
+        frames: list[FlightKeyframe] = []
 
-        def add_frame(
-            camera: CameraState,
+        def add_after(
             duration: mp.mpf,
+            camera: CameraState,
             *,
-            easing: Easing = Easing.SMOOTHSTEP,
-            center_interpolation: CenterInterpolation = CenterInterpolation.FOCUS,
-        ) -> None:
+            easing: Easing = Easing.SMOOTHERSTEP,
+            center: CenterInterpolation = CenterInterpolation.FOCUS,
+        ) -> mp.mpf:
             nonlocal current
-            duration = min(max(duration, minimum_segment), maximum_segment)
             current += duration
             frames.append(
                 FlightKeyframe(
                     _format_decimal(current, digits=digits),
                     camera,
                     easing,
-                    center_interpolation,
+                    center,
                 )
             )
+            return current
 
-        if hold_before > 0:
-            add_frame(
-                source_camera,
-                hold_before,
-                easing=Easing.LINEAR,
-                center_interpolation=CenterInterpolation.LINEAR,
-            )
+        # A duplicate first frame creates a short hold without modifying the
+        # existing path's last keyframe or its preceding segment.
+        add_after(hold_before, source_camera)
 
         bridge_text: str | None = None
         if mode is TransitionMode.CUT:
-            add_frame(
-                target.camera,
-                cut_seconds,
-                easing=Easing.STEP,
-                center_interpolation=CenterInterpolation.LINEAR,
+            # STEP holds the old camera for the entire tiny outgoing segment and
+            # switches exactly at its end, giving the path model a real cut.
+            frames[-1] = FlightKeyframe(
+                frames[-1].time_seconds_text,
+                source_camera,
+                Easing.STEP,
+                CenterInterpolation.LINEAR,
             )
+            arrival = add_after(cut_seconds, target.camera)
         elif mode is TransitionMode.DIRECT:
-            add_frame(
-                target.camera,
-                _direct_duration(
-                    source_x,
-                    source_y,
-                    source_width,
-                    target_x,
-                    target_y,
-                    target_width,
-                    aspect=aspect,
-                    zoom_speed=zoom_speed,
-                    pan_speed=pan_speed,
-                ),
-                center_interpolation=CenterInterpolation.FOCUS,
+            direct_seconds = _direct_duration(
+                source_width,
+                target_width,
+                normalized_distance,
+                zoom_speed,
             )
+            arrival = add_after(direct_seconds, target.camera)
         elif mode is TransitionMode.BRIDGE:
             bridge_text = _format_decimal(bridge_width, digits=digits)
-            source_bridge = _camera(source_x, source_y, bridge_width, digits=digits)
-            target_bridge = _camera(target_x, target_y, bridge_width, digits=digits)
-            add_frame(
-                source_bridge,
+            source_bridge = CameraState.from_values(
+                source_x, source_y, bridge_width, digits=digits
+            )
+            target_bridge = CameraState.from_values(
+                target_x, target_y, bridge_width, digits=digits
+            )
+            add_after(
                 _zoom_duration(source_width, bridge_width, zoom_speed),
+                source_bridge,
             )
-            add_frame(
-                target_bridge,
+            add_after(
                 _pan_duration(screen_distance, bridge_width, pan_speed),
-                center_interpolation=CenterInterpolation.LINEAR,
+                target_bridge,
+                center=CenterInterpolation.LINEAR,
             )
-            add_frame(
-                target.camera,
+            arrival = add_after(
                 _zoom_duration(bridge_width, target_width, zoom_speed),
+                target.camera,
             )
-        elif mode is TransitionMode.OVERVIEW:
+        else:
             bridge_text = _format_decimal(overview_width, digits=digits)
-            source_overview = _camera(
+            source_overview = CameraState.from_values(
                 source_x, source_y, overview_width, digits=digits
             )
-            target_overview = _camera(
+            target_overview = CameraState.from_values(
                 target_x, target_y, overview_width, digits=digits
             )
-            add_frame(
-                source_overview,
+            add_after(
                 _zoom_duration(source_width, overview_width, zoom_speed),
+                source_overview,
             )
-            overview_distance = _screen_distance(
-                source_x,
-                source_y,
-                overview_x,
-                overview_y,
-                aspect=aspect,
+            overview_camera = CameraState.from_values(
+                overview_x, overview_y, overview_width, digits=digits
             )
-            add_frame(
-                settings.overview_camera,
+            overview_distance = max(
+                abs(overview_x - source_x), aspect * abs(overview_y - source_y)
+            )
+            add_after(
                 _pan_duration(overview_distance, overview_width, pan_speed),
-                center_interpolation=CenterInterpolation.LINEAR,
+                overview_camera,
+                center=CenterInterpolation.LINEAR,
             )
-            target_overview_distance = _screen_distance(
-                overview_x,
-                overview_y,
-                target_x,
-                target_y,
-                aspect=aspect,
+            target_overview_distance = max(
+                abs(target_x - overview_x), aspect * abs(target_y - overview_y)
             )
-            add_frame(
-                target_overview,
+            add_after(
                 _pan_duration(target_overview_distance, overview_width, pan_speed),
-                center_interpolation=CenterInterpolation.LINEAR,
+                target_overview,
+                center=CenterInterpolation.LINEAR,
             )
-            add_frame(
-                target.camera,
+            arrival = add_after(
                 _zoom_duration(overview_width, target_width, zoom_speed),
-            )
-        else:  # pragma: no cover - enum completeness guard
-            raise AssertionError(f"unsupported transition mode: {mode}")
-
-        arrival = current
-        if hold_after > 0:
-            add_frame(
                 target.camera,
-                hold_after,
-                easing=Easing.LINEAR,
-                center_interpolation=CenterInterpolation.LINEAR,
             )
-        end = current
 
         arrival_text = _format_decimal(arrival, digits=digits)
-        end_text = _format_decimal(end, digits=digits)
+        add_after(hold_after, target.camera)
+        end_text = _format_decimal(current, digits=digits)
+
+        effective_palette_mode = palette_mode
+        if mode is TransitionMode.CUT and palette_mode is PaletteTransition.BLEND:
+            effective_palette_mode = PaletteTransition.CUT
         source_anchor = RenderCue(
             _format_decimal(start_time, digits=digits),
             source_profile,
-            PaletteTransition.HOLD,
+            PaletteTransition.CUT,
         )
-        effective_palette_mode = (
-            PaletteTransition.CUT if mode is TransitionMode.CUT else palette_mode
-        )
-        target_profile = target.render_profile
+        target_profile = target.profile
         if effective_palette_mode is PaletteTransition.HOLD:
+            # The cue still carries target quality, while HOLD deliberately keeps
+            # the current effective palette and cycles.
             target_profile = RenderProfile(
-                target_profile.max_iterations,
-                target_profile.reference_bits,
-                source_profile.palette,
-                source_profile.cycles_text,
+                target.profile.max_iterations,
+                target.profile.reference_bits,
+                target.profile.palette,
+                target.profile.cycles_text,
             )
         target_cue = RenderCue(
             arrival_text,
@@ -446,16 +420,16 @@ def plan_transition(
 def suggested_target_width(
     source_camera: CameraState,
     *,
-    zoom_factor_text: str = "1",
+    zoom_factor_text: str = "10",
     digits: int = 80,
 ) -> str:
-    """Return an exact free-target width without applying hidden zoom by default."""
+    """Return an exact, moderate default width for a free right-click target."""
 
     with mp.workdps(digits):
         _x, _y, width = source_camera.values(digits=digits)
         factor = _positive_decimal(zoom_factor_text, "zoom factor", digits=digits)
-        if factor < 1:
-            raise ValueError("zoom factor must be at least one")
+        if factor <= 1:
+            raise ValueError("zoom factor must be greater than one")
         return _format_decimal(width / factor, digits=digits)
 
 
@@ -477,93 +451,54 @@ def merge_render_cues(
 
 
 def _direct_duration(
-    start_x: mp.mpf,
-    start_y: mp.mpf,
     start_width: mp.mpf,
-    end_x: mp.mpf,
-    end_y: mp.mpf,
     end_width: mp.mpf,
-    *,
-    aspect: mp.mpf,
+    normalized_distance: mp.mpf,
     zoom_speed: mp.mpf,
-    pan_speed: mp.mpf,
 ) -> mp.mpf:
     zoom = _zoom_duration(start_width, end_width, zoom_speed)
-    distance = _screen_distance(
-        start_x,
-        start_y,
-        end_x,
-        end_y,
-        aspect=aspect,
-    )
-    pan = _pan_duration(distance, max(start_width, end_width), pan_speed)
-    return max(zoom, pan)
+    steering = min(mp.mpf("2.5"), normalized_distance * mp.mpf("1.25"))
+    return min(mp.mpf("12"), max(mp.mpf("1.25"), zoom + steering))
 
 
-def _zoom_duration(start_width: mp.mpf, end_width: mp.mpf, speed: mp.mpf) -> mp.mpf:
-    ratio = max(start_width, end_width) / min(start_width, end_width)
-    if ratio <= 1:
-        return mp.mpf("0")
-    return mp.log(ratio, 2) / speed
-
-
-def _pan_duration(distance: mp.mpf, view_width: mp.mpf, speed: mp.mpf) -> mp.mpf:
-    normalized = distance / view_width
-    return normalized / speed
-
-
-def _screen_distance(
-    start_x: mp.mpf,
-    start_y: mp.mpf,
-    end_x: mp.mpf,
-    end_y: mp.mpf,
-    *,
-    aspect: mp.mpf,
+def _zoom_duration(
+    start_width: mp.mpf,
+    end_width: mp.mpf,
+    stops_per_second: mp.mpf,
 ) -> mp.mpf:
-    return max(abs(end_x - start_x), abs(end_y - start_y) * aspect)
+    stops = abs(mp.log(end_width / start_width, 2))
+    return min(mp.mpf("12"), max(mp.mpf("0.9"), stops / stops_per_second))
 
 
-def _camera(
-    center_x: mp.mpf,
-    center_y: mp.mpf,
-    width: mp.mpf,
-    *,
-    digits: int,
-) -> CameraState:
-    return CameraState(
-        _format_decimal(center_x, digits=digits),
-        _format_decimal(center_y, digits=digits),
-        _format_decimal(width, digits=digits),
+def _pan_duration(
+    distance: mp.mpf,
+    view_width: mp.mpf,
+    viewports_per_second: mp.mpf,
+) -> mp.mpf:
+    normalized = distance / view_width
+    return min(
+        mp.mpf("5"),
+        max(mp.mpf("1"), normalized / viewports_per_second),
     )
 
 
-def _positive_decimal(value: str, name: str, *, digits: int) -> mp.mpf:
-    parsed = _decimal(value, name, digits=digits)
-    if parsed <= 0:
-        raise ValueError(f"{name} must be greater than zero")
-    return parsed
+def _positive_decimal(text: str, label: str, *, digits: int) -> mp.mpf:
+    value = _non_negative_decimal(text, label, digits=digits)
+    if value <= 0:
+        raise ValueError(f"{label} must be positive")
+    return value
 
 
-def _non_negative_decimal(value: str, name: str, *, digits: int) -> mp.mpf:
-    parsed = _decimal(value, name, digits=digits)
-    if parsed < 0:
-        raise ValueError(f"{name} must not be negative")
-    return parsed
-
-
-def _decimal(value: str, name: str, *, digits: int) -> mp.mpf:
-    with mp.workdps(digits):
-        try:
-            parsed = mp.mpf(str(value).strip())
-        except (TypeError, ValueError) as exc:
-            raise ValueError(f"{name} must be a decimal number") from exc
-        if not mp.isfinite(parsed):
-            raise ValueError(f"{name} must be finite")
-        return parsed
+def _non_negative_decimal(text: str, label: str, *, digits: int) -> mp.mpf:
+    try:
+        with mp.workdps(digits):
+            value = mp.mpf(text)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be a decimal number") from exc
+    if not mp.isfinite(value) or value < 0:
+        raise ValueError(f"{label} must be finite and non-negative")
+    return value
 
 
 def _format_decimal(value: mp.mpf, *, digits: int) -> str:
-    text = mp.nstr(value, n=digits, strip_zeros=False)
-    if "e" not in text.lower() and "." in text:
-        text = text.rstrip("0").rstrip(".")
-    return text
+    return mp.nstr(value, n=digits, min_fixed=-6, max_fixed=12)
