@@ -29,11 +29,14 @@ def main() -> int:
     assert app.flight_plan_session.scene.fractal.value == "mandelbrot"
     assert len(app.deep_zoom_targets) == 10
     assert app.deep_zoom_target_var.get() == app.deep_zoom_targets[0].name
+
     app.set_catalog_flight_target()
-    assert app.flight_controller.target_text == (
-        app.deep_zoom_targets[0].center_x_text,
-        app.deep_zoom_targets[0].center_y_text,
-    )
+    catalog_dialog = app.catalog_transition_dialog
+    assert catalog_dialog is not None
+    root.update_idletasks()
+    assert catalog_dialog.current_plan is not None
+    catalog_dialog.destroy()
+
     app.load_catalog_target_view()
     assert app.camera.center_x_text == app.deep_zoom_targets[0].center_x_text
     app.open_target_browser()
@@ -51,22 +54,32 @@ def main() -> int:
     selected = browser.selected_target
     assert selected is not None
     browser._set_selected_target()
-    assert app.flight_controller.target_text == (selected.center_x_text, selected.center_y_text)
+    root.update_idletasks()
     assert app.deep_zoom_target_var.get() == selected.name
+    assert app.catalog_transition_dialog is not None
+    assert app.catalog_transition_dialog.current_plan is not None
+    app.catalog_transition_dialog.destroy()
     browser.destroy()
     root.update_idletasks()
+
+    source_camera = app.camera
+    click = type("Click", (), {"x": max(1, app.canvas.winfo_width()) // 2, "y": max(1, app.canvas.winfo_height()) // 2})()
+    app._set_flight_target(click)
+    free_dialog = app.free_target_dialog
+    assert free_dialog is not None
+    root.update_idletasks()
+    assert free_dialog.current_plan is not None
+    free_dialog._accept(play=False)
+    assert app.flight_plan_session.valid
+    assert app.camera_path is not None
+    assert app.camera_path.keyframes[0].camera == source_camera
+    initial_keyframe_count = len(app.camera_path.keyframes)
 
     app.open_timeline_editor()
     timeline = app.timeline_editor
     assert timeline is not None
     assert timeline.draft.keyframes[0].center_interpolation is CenterInterpolation.FOCUS
-    timeline._draft = timeline.draft.add_keyframe(
-        "2",
-        CameraState("-0.75", "0.1", "0.01"),
-        center_interpolation=CenterInterpolation.FOCUS,
-    )
-    timeline._refresh_tree(select_time="2")
-    timeline._publish_path_state()
+    assert len(timeline.draft.keyframes) == initial_keyframe_count
     assert app.camera_path_dirty
     with TemporaryDirectory() as directory:
         plan_path = Path(directory) / "smoke.fractal-flight.json"
@@ -77,14 +90,14 @@ def main() -> int:
         assert saved.source_schema_version == FLIGHT_PLAN_SCHEMA_VERSION
         assert saved.render_track.first_profile.palette == app.palette_var.get()
         assert not app.camera_path_dirty
-        timeline._draft = timeline.draft.remove_keyframe(1)
+        timeline._draft = timeline.draft.remove_keyframe(len(timeline.draft.keyframes) - 1)
         timeline._refresh_tree()
         timeline._publish_path_state()
         assert app.camera_path_dirty
         assert app._load_flight_plan_path(plan_path)
         timeline = app.timeline_editor
         assert timeline is not None
-        assert len(timeline.draft.keyframes) == 2
+        assert len(timeline.draft.keyframes) == initial_keyframe_count
         assert app.camera_path_file == plan_path
         assert app.camera_path_name == "GUI smoke"
         assert not app.camera_path_dirty
