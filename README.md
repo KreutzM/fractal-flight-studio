@@ -169,7 +169,10 @@ Helligkeit, Kontrast und Farbverteilung zwischen benachbarten Frames ruhiger.
 - „Flug starten“: kontinuierlich zum Ziel zoomen; stoppt automatisch an der numerischen Präzisionsgrenze
 - „PNG exportieren“: Bild in aktueller Fensterauflösung speichern
 - „Flugplan …“: aktuelle Ansichten und Katalogziele als exakte X/Y/Zoom-Keyframes anlegen, pro Segment `focus` oder `linear` wählen und Zwischenpositionen prüfen
+- „Flugplan-Wiedergabe“: den vollständigen Plan abspielen, pausieren, stoppen, per Zeitleiste durchsuchen, zwischen Keyframes springen oder mit 0,5×/1×/2× wiedergeben
 - „Video exportieren …“: Auflösung und Framerate planen, FFmpeg prüfen, einen Low-Resolution-Preflight ausführen und anschließend direkt als MP4 rendern
+
+Die Echtzeitwiedergabe verwendet dieselbe zeitabhängige Kamera-, Qualitäts- und Palettenauswertung wie Preflight und MP4-Export. Der Playhead folgt einer monotonen Echtzeituhr. Ist das Rendering langsamer als die Timeline, werden veraltete Zwischenpositionen nicht nachgeholt; nach dem fertigen Frame wird direkt die aktuellste Position gerendert.
 
 Für normale Vorschau und Flug kann die Render-Skalierung getrennt auf 50 %, 75 % oder 100 % gesetzt werden. Auf CUDA-Systemen ist 100 % voreingestellt; auf CPU-Systemen 75 %. Die Statuszeile trennt Rechnen/Transfer von der Tk-Anzeige.
 
