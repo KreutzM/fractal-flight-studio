@@ -1,8 +1,9 @@
 param(
     [string]$Target = "seahorse-valley",
-    [int]$Width = 640,
-    [int]$Height = 360,
-    [int]$Repeats = 5,
+    [int]$Width = 1280,
+    [int]$Height = 720,
+    [int]$Repeats = 9,
+    [int]$WarmupLaunches = 3,
     [int]$ReferenceSamples = 24,
     [string]$Output = "double-single-benchmark-results.json"
 )
@@ -22,6 +23,7 @@ try {
         --width $Width `
         --height $Height `
         --repeats $Repeats `
+        --warmup-launches $WarmupLaunches `
         --reference-samples $ReferenceSamples `
         --output $Output
     if ($LASTEXITCODE -ne 0) {
