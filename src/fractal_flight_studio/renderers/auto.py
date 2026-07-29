@@ -6,7 +6,7 @@ from ..deep_zoom import direct_pixel_grid_quality, effective_direct_precision
 from ..models import Precision, RenderRequest
 from .base import FrameResult, Renderer, RenderResult
 from .cpu import CpuRenderer
-from .cuda_tonemap import CudaRenderer
+from .cuda_double_single_renderer import CudaRenderer
 
 
 class AdaptivePrecisionRenderer(Renderer):

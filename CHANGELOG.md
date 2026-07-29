@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### CUDA double-single direct rendering
+
+- CUDA `auto` rendering now uses the benchmarked double-single Mandelbrot kernel after FP32 promotion and before the existing FP64 perturbation threshold.
+- Exact camera text is split on the CPU into FP32 high/low components; the GPU never assembles the camera in FP64 before splitting it.
+- Explicit `direct + float64`, non-Mandelbrot fractals, unsupported index ranges and FP32-exponent overflows keep the native FP64 path.
+- Render metadata preserves `precision=float64` and reports the internal `arithmetic` plus `double_single_enabled`.
+
+### Validation
+
+- Added routing, exact-coordinate-transfer and CUDA-simulator regressions for numerical output and the optimized RGB frame path.
+
+
 ### Unified right-click flight targets
 
 - Right-click now opens a compact next-target proposal instead of starting an independent endless zoom flight.
