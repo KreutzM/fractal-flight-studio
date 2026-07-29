@@ -3,8 +3,9 @@ param(
     [int]$Width = 1280,
     [int]$Height = 720,
     [int]$Repeats = 9,
-    [int]$WarmupLaunches = 3,
     [int]$ReferenceSamples = 24,
+    [double]$WarmupSeconds = 1.0,
+    [double]$BatchTargetSeconds = 0.25,
     [string]$Output = "double-single-benchmark-results.json"
 )
 
@@ -18,12 +19,13 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
 
 Push-Location $ProjectRoot
 try {
-    & $Python .\scripts\benchmark_double_single.py `
+    & $Python .\scripts\benchmark_double_single_stable.py `
         --target $Target `
         --width $Width `
         --height $Height `
         --repeats $Repeats `
-        --warmup-launches $WarmupLaunches `
+        --warmup-seconds $WarmupSeconds `
+        --batch-target-seconds $BatchTargetSeconds `
         --reference-samples $ReferenceSamples `
         --output $Output
     if ($LASTEXITCODE -ne 0) {
