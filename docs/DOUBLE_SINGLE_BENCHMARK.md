@@ -47,10 +47,17 @@ From PowerShell in the repository root:
 .\scripts\benchmark_double_single.ps1
 ```
 
+The default physical-GPU run uses 1280×720 pixels, nine measured repetitions, and three unmeasured warm-up launches per variant. The warm-up launches occur after JIT compilation and before timing to reduce clock-ramp and first-use effects.
+
 A smaller smoke benchmark can be run as:
 
 ```powershell
-.\scripts\benchmark_double_single.ps1 -Width 320 -Height 180 -Repeats 3 -ReferenceSamples 12
+.\scripts\benchmark_double_single.ps1 `
+    -Width 320 `
+    -Height 180 `
+    -Repeats 3 `
+    -WarmupLaunches 1 `
+    -ReferenceSamples 12
 ```
 
 The command writes `double-single-benchmark-results.json` and a sibling directory containing PTX, optional SASS, and grayscale error maps. SASS inspection requires `nvdisasm` on `PATH`; a missing tool is recorded rather than treated as a benchmark failure.
@@ -60,22 +67,26 @@ The command writes `double-single-benchmark-results.json` and a sibling director
 The JSON report separates:
 
 - first launch including JIT compilation;
+- unmeasured post-compilation warm-up launches;
 - warm pure-kernel time measured with CUDA events;
 - warm end-to-end wall time including output readback and synchronization;
 - pixels/s and executed iterations/s;
 - registers per thread, local memory per thread, static shared memory, maximum threads per block, active blocks per SM, and theoretical thread occupancy where the Numba driver API exposes them;
-- PTX/SASS instruction counts, explicit FMA use, FP64 mentions, and local-memory loads/stores;
+- per-signature resource values when Numba returns generic-dispatcher dictionaries;
+- PTX/SASS instruction counts, explicit FMA use, FP64 arithmetic, and local-memory loads/stores;
 - deterministic high-precision sample comparisons;
 - false escaped/inside classifications, escape-iteration delta, smooth-iteration delta, final-orbit error, and CPU double-single orbit error growth;
 - full-frame error maps relative to native FP64;
 - coordinate-grid uniqueness and an empirical view-width floor;
 - subnormal-component observations.
 
-`nvidia-smi` is captured only as an environment snapshot. Short power samples are not interpreted as energy efficiency.
+The PTX counter accepts both default-rounding opcodes such as `mul.f32` and explicit forms such as `mul.rn.f32`. The report distinguishes actual FP64 arithmetic instructions from incidental `.f64` text mentions.
+
+`nvidia-smi` is captured immediately before and after the measured launches of every variant, as well as once for the overall environment. These snapshots help identify unstable clocks or P-states but are not interpreted as energy measurements.
 
 ## CI behavior
 
-CI runs CPU arithmetic/reference tests and launches a tiny kernel through the CUDA simulator in a subprocess. The simulator proves only that the device functions and kernel interfaces execute; it is never used as a performance result. Physical-GPU conclusions must come from the JSON report produced on the RTX 3060.
+CI runs CPU arithmetic/reference tests, validates PTX/resource-report parsing with synthetic inputs, and launches a tiny kernel through the CUDA simulator in a subprocess. The simulator proves only that the device functions and kernel interfaces execute; it is never used as a performance result. Physical-GPU conclusions must come from the JSON report produced on the RTX 3060.
 
 ## Interpretation gate
 
@@ -88,7 +99,7 @@ A production double-single direct path should proceed only if the RTX 3060 repor
 - acceptable boundary classification and smooth-iteration errors;
 - a useful coordinate-resolution interval between direct FP32 and perturbation.
 
-The earlier expectation of roughly 6–10 times FP32 cost remains a hypothesis. Measurements may instead show 10–20 times FP32 cost when register pressure or instruction count dominates.
+The first 640×360 RTX 3060 run indicated that specialized double-single with `lo * lo` and a high-only escape test is roughly 4.3× faster than native FP64 at kernel level. That result remains preliminary because the original run lacked physical register counts, contained short samples, and showed clock/outlier sensitivity. The corrected benchmark is intended to verify the result at a larger workload.
 
 ## Follow-on roadmap
 
