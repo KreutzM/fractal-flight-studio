@@ -105,6 +105,8 @@ The full, adaptive, and high-only `lo * lo` variants produced byte-identical esc
 
 Across both runs, specialized DS remained clearly faster than native FP64 whenever clocks were comparable. The exact `lo * lo` versus no-`lo * lo` speed difference still requires the sustained-batch run.
 
+The 1280×720 frame comparison also confirms that DS is an intermediate precision tier rather than a bit-identical FP64 replacement: the specialized variants differed from native FP64 at roughly 0.76% of pixels in escape iteration, compared with about 30.18% for FP32. The high-only `lo * lo` variant had a mean absolute smooth-iteration delta of about 0.393 relative to FP64. These differences were concentrated along chaotic boundary structures, and a single target is not sufficient to define final routing thresholds.
+
 ## CI behavior
 
 CI runs CPU arithmetic/reference tests, validates PTX/resource/version parsing and stable batch selection with synthetic inputs, and launches a tiny kernel through the CUDA simulator in a subprocess. The simulator proves only that the device functions and kernel interfaces execute; it is never used as a performance result. Physical-GPU conclusions must come from the JSON report produced on the RTX 3060.
