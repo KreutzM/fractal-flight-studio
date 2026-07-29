@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -31,6 +32,16 @@ from fractal_flight_studio.research.double_single import (
 
 def _value(number: DoubleSingle) -> mp.mpf:
     return mp.mpf(float(number.hi)) + mp.mpf(float(number.lo))
+
+
+def _load_benchmark_module():
+    path = Path(__file__).parents[1] / "scripts" / "benchmark_double_single.py"
+    spec = importlib.util.spec_from_file_location("fractal_double_single_benchmark", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_two_sum_is_error_free_for_fp32_inputs() -> None:
@@ -119,6 +130,59 @@ def test_double_single_mandelbrot_matches_high_precision_escape() -> None:
     assert ds.escaped is reference.escaped
     assert ds.escape_iteration == reference.escape_iteration
     assert ds.smooth_iteration == pytest.approx(reference.smooth_iteration, abs=2e-5)
+
+
+def test_ptx_instruction_counter_accepts_default_rounding_opcodes() -> None:
+    benchmark = _load_benchmark_module()
+    ptx = """
+        mul.f32 %f1, %f2, %f3;
+        mul.rn.f32 %f4, %f5, %f6;
+        add.f32 %f7, %f8, %f9;
+        @%p1 sub.rn.f32 %f10, %f11, %f12;
+        fma.rn.f32 %f13, %f14, %f15, %f16;
+        add.rn.f64 %fd1, %fd2, %fd3;
+        ld.local.u32 %r1, [%rd1];
+        st.local.u32 [%rd2], %r2;
+    """
+
+    counts = benchmark._ptx_instruction_counts(ptx)
+
+    assert counts["fma_rn_f32"] == 1
+    assert counts["mul_f32"] == 2
+    assert counts["add_f32"] == 1
+    assert counts["sub_f32"] == 1
+    assert counts["f64_arithmetic"] == 1
+    assert counts["local_loads"] == 1
+    assert counts["local_stores"] == 1
+
+
+def test_resource_metric_normalizes_signature_dictionaries() -> None:
+    benchmark = _load_benchmark_module()
+
+    maximum, by_signature = benchmark._normalize_resource_metric(
+        {"sig-a": 32, "sig-b": 48}, reducer=max
+    )
+    minimum, _ = benchmark._normalize_resource_metric(
+        {"sig-a": 1024, "sig-b": 512}, reducer=min
+    )
+
+    assert maximum == 48
+    assert by_signature == {"sig-a": 32, "sig-b": 48}
+    assert minimum == 512
+
+
+def test_cuda_version_normalizer_accepts_tuple_and_integer() -> None:
+    benchmark = _load_benchmark_module()
+
+    assert benchmark._json_version((12, 9)) == [12, 9]
+    assert benchmark._json_version(12090) == 12090
+
+
+def test_benchmark_config_rejects_negative_warmup_launches() -> None:
+    benchmark = _load_benchmark_module()
+
+    with pytest.raises(ValueError, match="warmup launches"):
+        benchmark.BenchmarkConfig(warmup_launches=-1)
 
 
 def test_cuda_simulator_launches_specialized_kernel(tmp_path: Path) -> None:
