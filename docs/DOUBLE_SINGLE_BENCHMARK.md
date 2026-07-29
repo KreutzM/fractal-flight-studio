@@ -23,7 +23,7 @@ The production perturbation architecture remains unchanged: arbitrary-precision 
 
 The cancellation-prone hot path uses general `two_sum` rather than assuming the `quick_two_sum` magnitude precondition. Global fast math is not enabled.
 
-The adaptive escape band accounts for represented low components plus a conservative FP32 evaluation margin. It is intentionally treated as an experimental heuristic, not as a proof of total accumulated orbit error. The benchmark validates it against high-precision sample points and the full-frame FP64 comparison.
+The adaptive escape band accounts for represented low components plus a conservative FP32 evaluation margin. It is intentionally treated as an experimental heuristic, not as a proof of total accumulated orbit error.
 
 ## Variants
 
@@ -47,16 +47,17 @@ From PowerShell in the repository root:
 .\scripts\benchmark_double_single.ps1
 ```
 
-The default physical-GPU run uses 1280×720 pixels, nine measured repetitions, and three unmeasured warm-up launches per variant. The warm-up launches occur after JIT compilation and before timing to reduce clock-ramp and first-use effects.
+The launcher now uses `benchmark_double_single_stable.py`. Its default physical-GPU run uses 1280×720 pixels, nine measured repetitions, at least one second of unmeasured warm-up per variant, and sustained timing batches targeting roughly 250 ms.
 
-A smaller smoke benchmark can be run as:
+A smaller functional run can be started as:
 
 ```powershell
 .\scripts\benchmark_double_single.ps1 `
     -Width 320 `
     -Height 180 `
     -Repeats 3 `
-    -WarmupLaunches 1 `
+    -WarmupSeconds 0.25 `
+    -BatchTargetSeconds 0.05 `
     -ReferenceSamples 12
 ```
 
@@ -64,42 +65,62 @@ The command writes `double-single-benchmark-results.json` and a sibling director
 
 ## Measurement method
 
-The JSON report separates:
+The stable report separates:
 
 - first launch including JIT compilation;
-- unmeasured post-compilation warm-up launches;
-- warm pure-kernel time measured with CUDA events;
-- warm end-to-end wall time including output readback and synchronization;
+- duration-based unmeasured post-compilation warm-up;
+- production-shaped kernels that write only escape and smooth outputs;
+- sustained pure-kernel batches measured with CUDA events and divided by launch count;
+- one-launch end-to-end wall time with identical escape/smooth readback for FP32, FP64, and DS;
+- diagnostic DS orbit capture executed once after timing;
+- an exact output-equality check between production-shaped and diagnostic DS kernels;
 - pixels/s and executed iterations/s;
-- registers per thread, local memory per thread, static shared memory, maximum threads per block, active blocks per SM, and theoretical thread occupancy where the Numba driver API exposes them;
+- timing minima, maxima, and coefficients of variation;
+- registers per thread, local memory per thread, static shared memory, maximum threads per block, active blocks per SM, and theoretical thread occupancy;
 - per-signature resource values when Numba returns generic-dispatcher dictionaries;
 - PTX/SASS instruction counts, explicit FMA use, FP64 arithmetic, and local-memory loads/stores;
 - deterministic high-precision sample comparisons;
-- false escaped/inside classifications, escape-iteration delta, smooth-iteration delta, final-orbit error, and CPU double-single orbit error growth;
+- escape-iteration delta, smooth-iteration delta, final-orbit error, and CPU double-single orbit error growth;
 - full-frame error maps relative to native FP64;
 - coordinate-grid uniqueness and an empirical view-width floor;
 - subnormal-component observations.
 
 The PTX counter accepts both default-rounding opcodes such as `mul.f32` and explicit forms such as `mul.rn.f32`. The report distinguishes actual FP64 arithmetic instructions from incidental `.f64` text mentions.
 
-`nvidia-smi` is captured immediately before and after the measured launches of every variant, as well as once for the overall environment. These snapshots help identify unstable clocks or P-states but are not interpreted as energy measurements.
+`nvidia-smi` is captured before warm-up, after warm-up, and after the measured batches of every variant. These snapshots help identify unstable clocks or P-states but are not interpreted as energy measurements.
+
+## Findings from the first two RTX 3060 runs
+
+The PTX and resource inspection is positive:
+
+- the DS kernels contain explicit `fma.rn.f32`;
+- no DS variant contains FP64 arithmetic;
+- specialized kernels use 36–38 registers per thread;
+- no local memory was reported;
+- six 256-thread blocks fit per SM, corresponding to full theoretical thread occupancy.
+
+The 1280×720 run did not provide a fair final timing comparison. FP32, FP64, generic DS, and the no-`lo * lo` specialized kernel were sampled in P2 near 1.84–1.93 GHz. The later `lo * lo` variants were sampled in P3 near 0.66–0.77 GHz, and their individual launch times changed by factors of roughly three to five. A fixed count of three warm-up launches was therefore insufficient.
+
+The full, adaptive, and high-only `lo * lo` variants produced byte-identical escape and smooth error maps for the tested frame. Their additional escape-test arithmetic did not improve classification on this target. The high-only escape test remains the production candidate until a broader target matrix demonstrates a benefit from the more expensive alternatives.
+
+Across both runs, specialized DS remained clearly faster than native FP64 whenever clocks were comparable. The exact `lo * lo` versus no-`lo * lo` speed difference still requires the sustained-batch run.
 
 ## CI behavior
 
-CI runs CPU arithmetic/reference tests, validates PTX/resource-report parsing with synthetic inputs, and launches a tiny kernel through the CUDA simulator in a subprocess. The simulator proves only that the device functions and kernel interfaces execute; it is never used as a performance result. Physical-GPU conclusions must come from the JSON report produced on the RTX 3060.
+CI runs CPU arithmetic/reference tests, validates PTX/resource/version parsing and stable batch selection with synthetic inputs, and launches a tiny kernel through the CUDA simulator in a subprocess. The simulator proves only that the device functions and kernel interfaces execute; it is never used as a performance result. Physical-GPU conclusions must come from the JSON report produced on the RTX 3060.
 
 ## Interpretation gate
 
 A production double-single direct path should proceed only if the RTX 3060 report shows all of the following:
 
-- explicit FP32 FMA in PTX and SASS;
+- explicit FP32 FMA in PTX and preferably SASS;
 - no unexpected FP64 arithmetic in the specialized kernel;
 - no material register spilling or occupancy collapse;
-- materially lower warm kernel and end-to-end time than native FP64;
-- acceptable boundary classification and smooth-iteration errors;
+- stable, materially lower warm kernel and end-to-end time than native FP64;
+- acceptable boundary classification and smooth-iteration errors across several representative targets;
 - a useful coordinate-resolution interval between direct FP32 and perturbation.
 
-The first 640×360 RTX 3060 run indicated that specialized double-single with `lo * lo` and a high-only escape test is roughly 4.3× faster than native FP64 at kernel level. That result remains preliminary because the original run lacked physical register counts, contained short samples, and showed clock/outlier sensitivity. The corrected benchmark is intended to verify the result at a larger workload.
+The resource and generated-code gates are already satisfied by the second run. The stable timing gate and broader accuracy matrix remain open.
 
 ## Follow-on roadmap
 
