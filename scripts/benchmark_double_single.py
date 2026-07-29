@@ -6,11 +6,12 @@ import json
 import math
 from pathlib import Path
 import platform
+import re
 import shutil
 import statistics
 import subprocess
 import time
-from typing import Any
+from typing import Any, Callable
 
 import mpmath as mp
 import numpy as np
@@ -33,10 +34,11 @@ from fractal_flight_studio.research.double_single import (
 @dataclass(frozen=True, slots=True)
 class BenchmarkConfig:
     target_id: str = "seahorse-valley"
-    width: int = 640
-    height: int = 360
+    width: int = 1280
+    height: int = 720
     max_iterations: int | None = None
-    repeats: int = 5
+    repeats: int = 9
+    warmup_launches: int = 3
     reference_samples: int = 24
     reference_bits: int = 256
     inspect_assembly: bool = True
@@ -46,6 +48,8 @@ class BenchmarkConfig:
             raise ValueError("dimensions must be positive")
         if self.repeats < 1:
             raise ValueError("repeats must be at least one")
+        if self.warmup_launches < 0:
+            raise ValueError("warmup launches must not be negative")
         if self.reference_samples < 1:
             raise ValueError("reference samples must be at least one")
         if self.reference_bits < 96:
@@ -59,8 +63,17 @@ def _cuda_available() -> bool:
         return False
 
 
+def _json_version(value: Any) -> int | list[int]:
+    """Normalize CUDA version APIs that return either an integer or a tuple."""
+
+    if isinstance(value, (tuple, list)):
+        return [int(part) for part in value]
+    return int(value)
+
+
 def _device_metadata() -> dict[str, Any]:
-    device = cuda.current_context().device
+    context = cuda.current_context()
+    device = context.device
     raw_name = device.name
     if isinstance(raw_name, bytes):
         raw_name = raw_name.decode(errors="replace")
@@ -72,16 +85,21 @@ def _device_metadata() -> dict[str, Any]:
             getattr(device, "MAX_THREADS_PER_MULTIPROCESSOR", 0)
         ),
         "warp_size": int(getattr(device, "WARP_SIZE", 32)),
-        "total_memory_bytes": int(getattr(device, "total_memory", 0)),
     }
     try:
-        data["cuda_runtime_version"] = list(cuda.runtime.get_version())
+        free_memory, total_memory = context.get_memory_info()
+        data["free_memory_bytes"] = int(free_memory)
+        data["total_memory_bytes"] = int(total_memory)
+    except Exception as exc:
+        data["memory_info_error"] = repr(exc)
+    try:
+        data["cuda_runtime_version"] = _json_version(cuda.runtime.get_version())
     except Exception as exc:
         data["cuda_runtime_version_error"] = repr(exc)
     try:
         from numba.cuda.cudadrv import driver
 
-        data["cuda_driver_version"] = int(driver.driver.get_version())
+        data["cuda_driver_version"] = _json_version(driver.driver.get_version())
     except Exception as exc:
         data["cuda_driver_version_error"] = repr(exc)
     return data
@@ -176,6 +194,38 @@ def _extract_text(value: Any) -> str:
     return str(value)
 
 
+_PTX_OPCODE_PATTERN = re.compile(
+    r"^\s*(?:@[!%A-Za-z0-9_.$]+\s+)?([A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z0-9_]+)+)\b",
+    re.MULTILINE,
+)
+
+
+def _ptx_instruction_counts(ptx: str) -> dict[str, int]:
+    lowered = ptx.lower()
+    opcodes = [match.group(1).lower() for match in _PTX_OPCODE_PATTERN.finditer(ptx)]
+
+    def family_count(family: str, scalar: str) -> int:
+        prefix = f"{family}."
+        suffix = f".{scalar}"
+        return sum(opcode.startswith(prefix) and opcode.endswith(suffix) for opcode in opcodes)
+
+    f64_families = ("fma", "mad", "mul", "add", "sub", "div", "sqrt", "rsqrt")
+    return {
+        "fma_rn_f32": sum(opcode == "fma.rn.f32" for opcode in opcodes),
+        "fma_f32": family_count("fma", "f32"),
+        "mul_f32": family_count("mul", "f32"),
+        "add_f32": family_count("add", "f32"),
+        "sub_f32": family_count("sub", "f32"),
+        "f64_arithmetic": sum(
+            family_count(family, "f64") for family in f64_families
+        ),
+        "f64_mentions": lowered.count(".f64"),
+        "local_loads": sum(opcode.startswith("ld.local") for opcode in opcodes),
+        "local_stores": sum(opcode.startswith("st.local") for opcode in opcodes),
+        "ftz_mentions": lowered.count(".ftz"),
+    }
+
+
 def _assembly_summary(kernel, name: str, output_dir: Path, enabled: bool) -> dict[str, Any]:
     result: dict[str, Any] = {}
     if not enabled:
@@ -184,22 +234,14 @@ def _assembly_summary(kernel, name: str, output_dir: Path, enabled: bool) -> dic
         ptx = _extract_text(kernel.inspect_asm())
         ptx_path = output_dir / f"{name}.ptx"
         ptx_path.write_text(ptx, encoding="utf-8")
-        lowered = ptx.lower()
+        counts = _ptx_instruction_counts(ptx)
         result["ptx_file"] = str(ptx_path)
-        result["ptx_instruction_counts"] = {
-            "fma_rn_f32": lowered.count("fma.rn.f32"),
-            "mul_f32": lowered.count("mul.rn.f32"),
-            "add_f32": lowered.count("add.rn.f32"),
-            "sub_f32": lowered.count("sub.rn.f32"),
-            "f64_mentions": lowered.count(".f64"),
-            "local_loads": lowered.count("ld.local"),
-            "local_stores": lowered.count("st.local"),
-            "ftz_mentions": lowered.count(".ftz"),
-        }
+        result["ptx_instruction_counts"] = counts
         if name.startswith("ds-"):
             result["ptx_validation"] = {
-                "explicit_fp32_fma_present": "fma.rn.f32" in lowered,
-                "no_ftz_modifier": ".ftz" not in lowered,
+                "explicit_fp32_fma_present": counts["fma_rn_f32"] > 0,
+                "no_fp64_arithmetic": counts["f64_arithmetic"] == 0,
+                "no_ftz_modifier": counts["ftz_mentions"] == 0,
             }
     except Exception as exc:
         result["ptx_error"] = repr(exc)
@@ -224,20 +266,61 @@ def _assembly_summary(kernel, name: str, output_dir: Path, enabled: bool) -> dic
     return result
 
 
+def _normalize_resource_metric(
+    value: Any,
+    *,
+    reducer: Callable[[list[int]], int],
+) -> tuple[int, dict[str, int] | None]:
+    """Normalize Numba resource APIs for specialized and generic dispatchers."""
+
+    if isinstance(value, dict):
+        by_signature = {str(signature): int(metric) for signature, metric in value.items()}
+        if not by_signature:
+            raise ValueError("kernel resource metric did not contain a compiled signature")
+        return reducer(list(by_signature.values())), by_signature
+    return int(value), None
+
+
+def _capture_resource_metric(
+    result: dict[str, Any],
+    *,
+    key: str,
+    error_key: str,
+    value: Any,
+    reducer: Callable[[list[int]], int],
+) -> None:
+    try:
+        normalized, by_signature = _normalize_resource_metric(value, reducer=reducer)
+        result[key] = normalized
+        if by_signature is not None:
+            result[f"{key}_by_signature"] = by_signature
+    except Exception as exc:
+        result[error_key] = repr(exc)
+
+
 def _resource_summary(kernel, threads_per_block: int) -> dict[str, Any]:
     result: dict[str, Any] = {}
-    try:
-        result["registers_per_thread"] = int(kernel.get_regs_per_thread())
-    except Exception as exc:
-        result["registers_error"] = repr(exc)
-    try:
-        result["static_shared_memory_bytes"] = int(kernel.get_shared_mem_per_block())
-    except Exception as exc:
-        result["shared_memory_error"] = repr(exc)
-    try:
-        result["max_threads_per_block"] = int(kernel.get_max_threads_per_block())
-    except Exception as exc:
-        result["max_threads_error"] = repr(exc)
+    _capture_resource_metric(
+        result,
+        key="registers_per_thread",
+        error_key="registers_error",
+        value=kernel.get_regs_per_thread(),
+        reducer=max,
+    )
+    _capture_resource_metric(
+        result,
+        key="static_shared_memory_bytes",
+        error_key="shared_memory_error",
+        value=kernel.get_shared_mem_per_block(),
+        reducer=max,
+    )
+    _capture_resource_metric(
+        result,
+        key="max_threads_per_block",
+        error_key="max_threads_error",
+        value=kernel.get_max_threads_per_block(),
+        reducer=min,
+    )
     try:
         compiled = next(iter(kernel.overloads.values()))
         cufunc = compiled._codelibrary.get_cufunc()
@@ -280,6 +363,11 @@ def _benchmark_kernel(
     cuda.synchronize()
     compile_and_first_seconds = time.perf_counter() - compile_started
 
+    for _ in range(config.warmup_launches):
+        kernel[blocks, threads](*args)
+    cuda.synchronize()
+    before_samples = _nvidia_smi_snapshot()
+
     kernel_times: list[float] = []
     end_to_end_times: list[float] = []
     host_iterations = np.empty(shape, dtype=np.int32)
@@ -300,6 +388,7 @@ def _benchmark_kernel(
         cuda.synchronize()
         kernel_times.append(kernel_seconds)
         end_to_end_times.append(time.perf_counter() - wall_started)
+    after_samples = _nvidia_smi_snapshot()
 
     kernel_median = statistics.median(kernel_times)
     wall_median = statistics.median(end_to_end_times)
@@ -311,6 +400,7 @@ def _benchmark_kernel(
         "size": [config.width, config.height],
         "max_iterations": iterations,
         "compile_and_first_launch_seconds": compile_and_first_seconds,
+        "warmup_launches": config.warmup_launches,
         "kernel_seconds_median": kernel_median,
         "end_to_end_seconds_median": wall_median,
         "kernel_mpix_per_second": pixels / kernel_median / 1_000_000,
@@ -318,6 +408,8 @@ def _benchmark_kernel(
         "iterations_per_second": executed_iterations / kernel_median,
         "kernel_samples_seconds": kernel_times,
         "end_to_end_samples_seconds": end_to_end_times,
+        "nvidia_smi_before_samples": before_samples,
+        "nvidia_smi_after_samples": after_samples,
     }
     record.update(_resource_summary(kernel, threads[0] * threads[1]))
     record.update(_assembly_summary(kernel, name, output_dir, config.inspect_assembly))
@@ -581,6 +673,10 @@ def run(config: BenchmarkConfig, output: Path) -> dict[str, Any]:
                 "host wall clock including kernel, output readback, and synchronization"
             ),
             "cold_timing": "first launch includes JIT compilation and is reported separately",
+            "warmup": (
+                "unmeasured launches run after compilation and before samples to reduce "
+                "clock-ramp and first-use effects"
+            ),
             "fast_math": False,
             "energy": (
                 "not inferred from short samples; nvidia-smi is recorded only as an "
@@ -600,7 +696,10 @@ def run(config: BenchmarkConfig, output: Path) -> dict[str, Any]:
             ),
             "Double-single extends mantissa precision but not the FP32 exponent range.",
             "SASS inspection requires nvdisasm on PATH.",
-            "Performance conclusions require the physical RTX 3060 result file.",
+            (
+                "Short benchmark runs remain sensitive to GPU clocks and system load; "
+                "inspect the per-variant nvidia-smi snapshots and repeat unstable runs."
+            ),
         ],
     }
     output.write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -615,10 +714,11 @@ def main() -> int:
         )
     )
     parser.add_argument("--target", default="seahorse-valley")
-    parser.add_argument("--width", type=int, default=640)
-    parser.add_argument("--height", type=int, default=360)
+    parser.add_argument("--width", type=int, default=1280)
+    parser.add_argument("--height", type=int, default=720)
     parser.add_argument("--iterations", type=int)
-    parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument("--repeats", type=int, default=9)
+    parser.add_argument("--warmup-launches", type=int, default=3)
     parser.add_argument("--reference-samples", type=int, default=24)
     parser.add_argument("--reference-bits", type=int, default=256)
     parser.add_argument("--no-assembly", action="store_true")
@@ -635,6 +735,7 @@ def main() -> int:
             height=args.height,
             max_iterations=args.iterations,
             repeats=args.repeats,
+            warmup_launches=args.warmup_launches,
             reference_samples=args.reference_samples,
             reference_bits=args.reference_bits,
             inspect_assembly=not args.no_assembly,
