@@ -14,7 +14,7 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
 }
 Push-Location $ProjectRoot
 try {
-    & $Python .\scripts\check_cuda_double_single_perturbation_matrix.py `
+    & $Python .\scripts\check_cuda_double_single_perturbation_matrix_entry.py `
         --width $Width `
         --height $Height `
         --repeats $Repeats `
