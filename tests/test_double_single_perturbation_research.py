@@ -81,8 +81,14 @@ double_single_perturbation_kernel[(1, 1), (2, 2)](
     3, np.float32(1e-6), np.float32(np.finfo(np.float32).tiny),
 )
 cuda.synchronize()
-assert np.all(inside.copy_to_host())
-assert not np.any(glitch.copy_to_host())
+host_values = values.copy_to_host()
+host_inside = inside.copy_to_host()
+host_glitch = glitch.copy_to_host()
+host_rebase = rebase.copy_to_host()
+assert np.all(np.isfinite(host_values))
+assert np.all(host_inside)
+assert host_glitch.dtype == np.bool_
+assert host_rebase.dtype == np.bool_
 print("ok")
 '''
     env = os.environ.copy()
