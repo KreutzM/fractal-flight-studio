@@ -54,6 +54,8 @@ def test_double_single_perturbation_kernel_runs_in_cuda_simulator() -> None:
     code = r'''
 import numpy as np
 from numba import cuda
+if not hasattr(cuda, "fma"):
+    cuda.fma = lambda a, b, c: a * b + c
 from fractal_flight_studio.research.double_single_perturbation import (
     double_single_perturbation_kernel,
     split_reference_orbit,
