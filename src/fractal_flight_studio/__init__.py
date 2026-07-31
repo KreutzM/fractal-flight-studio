@@ -192,4 +192,4 @@ __all__ = [
     "suggested_flight_plan_name",
     "suggested_target_width",
 ]
-__version__ = "0.9.0"
+__version__ = "0.10.0"
