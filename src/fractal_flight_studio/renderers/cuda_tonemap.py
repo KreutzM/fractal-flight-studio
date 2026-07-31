@@ -9,6 +9,7 @@ from numba import cuda, float32
 
 from ..models import FractalKind, RenderRequest
 from ..palettes import PaletteInput
+from ..surface_lighting import SurfaceLightingSettings
 from ..tonemapping import resolve_locked_tone_state, resolve_tone_state, sample_grid
 from .base import FrameResult
 from .cuda import CudaRenderer as _BaseCudaRenderer
@@ -39,6 +40,103 @@ def _sample_values_kernel(values, inside, sample_values, sample_valid, grid_x, g
     else:
         sample_values[index] = value
         sample_valid[index] = True
+
+
+@cuda.jit(device=True, inline=True)
+def _surface_height(values, inside, px, py):
+    if inside[py, px]:
+        return float32(0.0)
+    value = values[py, px]
+    if value < float32(0.0):
+        return float32(0.0)
+    if value > float32(1.0):
+        return float32(1.0)
+    return value
+
+
+@cuda.jit(device=True, inline=True)
+def _round_to_u8(value):
+    if value <= float32(0.0):
+        return 0
+    if value >= float32(255.0):
+        return 255
+    lower = math.floor(value)
+    fraction = value - float32(lower)
+    if fraction > float32(0.5):
+        return int(lower) + 1
+    if fraction < float32(0.5):
+        return int(lower)
+    lower_int = int(lower)
+    return lower_int + (lower_int & 1)
+
+
+@cuda.jit
+def _surface_lighting_kernel(
+    values,
+    inside,
+    rgb,
+    lighting_strength,
+    light_x,
+    light_y,
+    light_z,
+    ambient,
+    diffuse,
+):
+    px, py = cuda.grid(2)
+    height = values.shape[0]
+    width = values.shape[1]
+    if px >= width or py >= height or inside[py, px]:
+        return
+
+    if width <= 1:
+        gradient_x = float32(0.0)
+    elif px == 0:
+        gradient_x = _surface_height(values, inside, 1, py) - _surface_height(
+            values, inside, 0, py
+        )
+    elif px == width - 1:
+        gradient_x = _surface_height(
+            values, inside, width - 1, py
+        ) - _surface_height(values, inside, width - 2, py)
+    else:
+        gradient_x = float32(0.5) * (
+            _surface_height(values, inside, px + 1, py)
+            - _surface_height(values, inside, px - 1, py)
+        )
+
+    if height <= 1:
+        gradient_y = float32(0.0)
+    elif py == 0:
+        gradient_y = _surface_height(values, inside, px, 1) - _surface_height(
+            values, inside, px, 0
+        )
+    elif py == height - 1:
+        gradient_y = _surface_height(
+            values, inside, px, height - 1
+        ) - _surface_height(values, inside, px, height - 2)
+    else:
+        gradient_y = float32(0.5) * (
+            _surface_height(values, inside, px, py + 1)
+            - _surface_height(values, inside, px, py - 1)
+        )
+
+    normal_x = -lighting_strength * gradient_x
+    normal_y = -lighting_strength * gradient_y
+    inverse_length = float32(1.0) / math.sqrt(
+        normal_x * normal_x + normal_y * normal_y + float32(1.0)
+    )
+    lambert = (
+        normal_x * light_x + normal_y * light_y + light_z
+    ) * inverse_length
+    if lambert < float32(0.0):
+        lambert = float32(0.0)
+    elif lambert > float32(1.0):
+        lambert = float32(1.0)
+    intensity = ambient + diffuse * lambert
+
+    rgb[py, px, 0] = _round_to_u8(float32(rgb[py, px, 0]) * intensity)
+    rgb[py, px, 1] = _round_to_u8(float32(rgb[py, px, 1]) * intensity)
+    rgb[py, px, 2] = _round_to_u8(float32(rgb[py, px, 2]) * intensity)
 
 
 @cuda.jit
@@ -134,8 +232,12 @@ class CudaRenderer(_BaseCudaRenderer):
     def _ensure_tone_buffers(self) -> None:
         if self._sample_values_device is not None:
             return
-        self._sample_values_device = cuda.device_array(4096, dtype=np.float32, stream=self._stream)
-        self._sample_valid_device = cuda.device_array(4096, dtype=np.bool_, stream=self._stream)
+        self._sample_values_device = cuda.device_array(
+            4096, dtype=np.float32, stream=self._stream
+        )
+        self._sample_valid_device = cuda.device_array(
+            4096, dtype=np.bool_, stream=self._stream
+        )
         self._sample_values_host = cuda.pinned_array(4096, dtype=np.float32)
         self._sample_valid_host = cuda.pinned_array(4096, dtype=np.bool_)
 
@@ -166,6 +268,7 @@ class CudaRenderer(_BaseCudaRenderer):
         tone_scene_key=None,
         tone_smoothing: float = 0.16,
         tone_state_locked: bool = False,
+        surface_lighting: SurfaceLightingSettings | None = None,
     ) -> FrameResult:
         request = self._stable_color_request(request)
         request.validate()
@@ -173,10 +276,20 @@ class CudaRenderer(_BaseCudaRenderer):
             raise ValueError("cycles must be positive")
         if tone_mapping not in _TONE_MODE_CODES:
             raise ValueError(f"unknown tone mapping mode: {tone_mapping}")
+        if surface_lighting is not None and not isinstance(
+            surface_lighting, SurfaceLightingSettings
+        ):
+            raise ValueError(
+                "surface_lighting must be SurfaceLightingSettings or None"
+            )
         if not self.is_available():
             raise RuntimeError("CUDA is not available")
 
-        effective_mode = "linear" if tone_mapping == "auto" and request.fractal is FractalKind.NEWTON else tone_mapping
+        effective_mode = (
+            "linear"
+            if tone_mapping == "auto" and request.fractal is FractalKind.NEWTON
+            else tone_mapping
+        )
         implicit_state = (
             not tone_state_locked and tone_state is None and tone_scene_key is None
         )
@@ -231,11 +344,17 @@ class CudaRenderer(_BaseCudaRenderer):
                 grid_x,
                 grid_y,
             )
-            self._sample_values_device.copy_to_host(self._sample_values_host, stream=self._stream)
-            self._sample_valid_device.copy_to_host(self._sample_valid_host, stream=self._stream)
+            self._sample_values_device.copy_to_host(
+                self._sample_values_host, stream=self._stream
+            )
+            self._sample_valid_device.copy_to_host(
+                self._sample_valid_host, stream=self._stream
+            )
             self._stream.synchronize()
             valid = self._sample_valid_host[:sample_count]
-            samples = np.asarray(self._sample_values_host[:sample_count][valid], dtype=np.float64)
+            samples = np.asarray(
+                self._sample_values_host[:sample_count][valid], dtype=np.float64
+            )
             next_state, tone_details = resolve_tone_state(
                 samples,
                 effective_mode,
@@ -251,7 +370,9 @@ class CudaRenderer(_BaseCudaRenderer):
 
         tone_analysis_seconds = time.perf_counter() - tone_analysis_started
         if next_state is None:
-            low, high, strength, gamma = (np.float32(x) for x in (0.0, 1.0, 1.0, 1.0))
+            low, high, strength, gamma = (
+                np.float32(x) for x in (0.0, 1.0, 1.0, 1.0)
+            )
         else:
             low = np.float32(next_state.low)
             high = np.float32(next_state.high)
@@ -271,6 +392,29 @@ class CudaRenderer(_BaseCudaRenderer):
             strength,
             gamma,
         )
+
+        lighting_enabled = bool(
+            surface_lighting is not None and surface_lighting.enabled
+        )
+        lighting_seconds = 0.0
+        if lighting_enabled and surface_lighting is not None:
+            azimuth = math.radians(surface_lighting.azimuth_degrees)
+            elevation = math.radians(surface_lighting.elevation_degrees)
+            horizontal = math.cos(elevation)
+            lighting_started = time.perf_counter()
+            _surface_lighting_kernel[blocks, threads, self._stream](
+                self._values_device,
+                self._inside_device,
+                self._rgb_device,
+                np.float32(surface_lighting.strength),
+                np.float32(horizontal * math.cos(azimuth)),
+                np.float32(horizontal * math.sin(azimuth)),
+                np.float32(math.sin(elevation)),
+                np.float32(surface_lighting.ambient),
+                np.float32(surface_lighting.diffuse),
+            )
+            lighting_seconds = time.perf_counter() - lighting_started
+
         self._rgb_device.copy_to_host(self._rgb_host, stream=self._stream)
         self._stream.synchronize()
         rgb = np.array(self._rgb_host, copy=True)
@@ -300,6 +444,23 @@ class CudaRenderer(_BaseCudaRenderer):
             "tone_state": next_state,
             "tone_mapping_requested": tone_mapping,
             "tone_analysis_seconds": tone_analysis_seconds,
+            "surface_lighting_enabled": lighting_enabled,
+            "surface_lighting_seconds": lighting_seconds,
         }
+        if lighting_enabled and surface_lighting is not None:
+            details.update(
+                {
+                    "surface_lighting_strength": surface_lighting.strength,
+                    "surface_lighting_azimuth_degrees": (
+                        surface_lighting.azimuth_degrees
+                    ),
+                    "surface_lighting_elevation_degrees": (
+                        surface_lighting.elevation_degrees
+                    ),
+                    "surface_lighting_ambient": surface_lighting.ambient,
+                    "surface_lighting_diffuse": surface_lighting.diffuse,
+                    "surface_lighting_timing_scope": "host kernel launch",
+                }
+            )
         details.update(tone_details)
         return FrameResult(rgb=rgb, backend=self.name, elapsed_seconds=elapsed, details=details)
