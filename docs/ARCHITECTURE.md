@@ -163,6 +163,12 @@ The Tk adapter decides when to schedule the next step. `flight_app.py` applies t
 
 Renderer modules remain responsible for numerical values, perturbation, CUDA execution, tone mapping and RGB production. They receive immutable `RenderRequest` values and must not depend on Tk or controller classes.
 
+### Surface-lighting reference core
+
+`surface_lighting.py` defines the renderer-independent reference behavior for optional 2.5D relief shading. It consumes an already normalized floating-point value field, the matching inside mask and an RGB8 frame. Central differences in the image interior and one-sided border differences form a screen-space normal field; a directional ambient-plus-Lambert model then modulates only outside pixels. Inside pixels remain byte-identical, all inputs remain immutable and disabled lighting returns a byte-identical copy.
+
+The reference core does not own fractal iteration, tone mapping, palette selection, GUI state, flight-plan persistence or CUDA routing. A later CPU renderer integration should call this behavior only after tone mapping and palette lookup. A later CUDA implementation must preserve this contract while keeping value, mask and RGB data on the device; physical GPU parity and performance validation belong to that integration PR rather than to the reference-core PR.
+
 ## Extension rules
 
 Future PRs should follow these boundaries:
