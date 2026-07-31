@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+import math
+from numbers import Real
+
+import numpy as np
+
+
+def _require_finite(name: str, value: float) -> None:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise ValueError(f"surface lighting {name} must be a finite number")
+    if not math.isfinite(float(value)):
+        raise ValueError(f"surface lighting {name} must be a finite number")
+
+
+@dataclass(frozen=True, slots=True)
+class SurfaceLightingSettings:
+    """Screen-space Lambert lighting for a normalized fractal height field.
+
+    Azimuth is measured clockwise in image space: 0 degrees points right and
+    90 degrees points down. Elevation is measured above the image plane.
+    """
+
+    enabled: bool = False
+    strength: float = 1.5
+    azimuth_degrees: float = 315.0
+    elevation_degrees: float = 45.0
+    ambient: float = 0.35
+    diffuse: float = 0.65
+
+    def __post_init__(self) -> None:
+        if type(self.enabled) is not bool:
+            raise ValueError("surface lighting enabled must be a boolean")
+        _require_finite("strength", self.strength)
+        _require_finite("azimuth_degrees", self.azimuth_degrees)
+        _require_finite("elevation_degrees", self.elevation_degrees)
+        _require_finite("ambient", self.ambient)
+        _require_finite("diffuse", self.diffuse)
+        if self.strength < 0.0:
+            raise ValueError("surface lighting strength must be non-negative")
+        if not 0.0 < self.elevation_degrees <= 90.0:
+            raise ValueError(
+                "surface lighting elevation_degrees must be in the interval (0, 90]"
+            )
+        if not 0.0 <= self.ambient <= 1.0:
+            raise ValueError("surface lighting ambient must be in the interval [0, 1]")
+        if not 0.0 <= self.diffuse <= 1.0:
+            raise ValueError("surface lighting diffuse must be in the interval [0, 1]")
+
+
+def apply_surface_lighting(
+    values: np.ndarray,
+    inside: np.ndarray,
+    rgb: np.ndarray,
+    settings: SurfaceLightingSettings = SurfaceLightingSettings(),
+) -> np.ndarray:
+    """Apply deterministic screen-space relief shading to an RGB8 frame.
+
+    ``values`` is interpreted as a normalized height field and clipped to the
+    interval [0, 1]. Inside pixels remain byte-identical to the input image.
+    The input arrays are never mutated, including when lighting is disabled.
+    """
+
+    values_array, inside_array, rgb_array = _validated_inputs(values, inside, rgb)
+    if not settings.enabled:
+        return rgb_array.copy()
+
+    height = np.clip(values_array, 0.0, 1.0).astype(np.float32, copy=True)
+    height[inside_array] = np.float32(0.0)
+    gradient_x, gradient_y = _height_gradients(height)
+
+    strength = np.float32(settings.strength)
+    normal_x = -strength * gradient_x
+    normal_y = -strength * gradient_y
+    inverse_length = np.float32(1.0) / np.sqrt(
+        normal_x * normal_x + normal_y * normal_y + np.float32(1.0)
+    )
+
+    azimuth = math.radians(settings.azimuth_degrees)
+    elevation = math.radians(settings.elevation_degrees)
+    horizontal = math.cos(elevation)
+    light_x = np.float32(horizontal * math.cos(azimuth))
+    light_y = np.float32(horizontal * math.sin(azimuth))
+    light_z = np.float32(math.sin(elevation))
+
+    lambert = (
+        normal_x * light_x + normal_y * light_y + light_z
+    ) * inverse_length
+    lambert = np.clip(lambert, 0.0, 1.0)
+    intensity = np.float32(settings.ambient) + np.float32(settings.diffuse) * lambert
+
+    shaded = np.rint(rgb_array.astype(np.float32) * intensity[..., np.newaxis])
+    result = np.clip(shaded, 0.0, 255.0).astype(np.uint8)
+    result[inside_array] = rgb_array[inside_array]
+    return result
+
+
+def _validated_inputs(
+    values: np.ndarray,
+    inside: np.ndarray,
+    rgb: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    values_array = np.asarray(values)
+    inside_array = np.asarray(inside)
+    rgb_array = np.asarray(rgb)
+
+    if values_array.ndim != 2 or values_array.size == 0:
+        raise ValueError("surface lighting values must be a non-empty 2D array")
+    if not np.issubdtype(values_array.dtype, np.floating):
+        raise ValueError("surface lighting values must use a floating-point dtype")
+    if not np.all(np.isfinite(values_array)):
+        raise ValueError("surface lighting values must be finite")
+    if inside_array.shape != values_array.shape or inside_array.dtype != np.bool_:
+        raise ValueError(
+            "surface lighting inside mask must be boolean and match values shape"
+        )
+    expected_rgb_shape = values_array.shape + (3,)
+    if rgb_array.shape != expected_rgb_shape or rgb_array.dtype != np.uint8:
+        raise ValueError(
+            "surface lighting rgb must be uint8 with shape values.shape + (3,)"
+        )
+    return values_array, inside_array, rgb_array
+
+
+def _height_gradients(height: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    gradient_x = np.zeros_like(height, dtype=np.float32)
+    gradient_y = np.zeros_like(height, dtype=np.float32)
+    rows, columns = height.shape
+
+    if columns > 1:
+        gradient_x[:, 0] = height[:, 1] - height[:, 0]
+        gradient_x[:, -1] = height[:, -1] - height[:, -2]
+        if columns > 2:
+            gradient_x[:, 1:-1] = (
+                height[:, 2:] - height[:, :-2]
+            ) * np.float32(0.5)
+
+    if rows > 1:
+        gradient_y[0, :] = height[1, :] - height[0, :]
+        gradient_y[-1, :] = height[-1, :] - height[-2, :]
+        if rows > 2:
+            gradient_y[1:-1, :] = (
+                height[2:, :] - height[:-2, :]
+            ) * np.float32(0.5)
+
+    return gradient_x, gradient_y
