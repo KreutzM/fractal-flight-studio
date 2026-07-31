@@ -9,6 +9,7 @@ import numpy as np
 
 from ..models import RenderRequest
 from ..palettes import PaletteInput
+from ..surface_lighting import SurfaceLightingSettings, apply_surface_lighting
 
 
 @dataclass(slots=True)
@@ -52,6 +53,7 @@ class Renderer(ABC):
         tone_scene_key=None,
         tone_smoothing: float = 0.16,
         tone_state_locked: bool = False,
+        surface_lighting: SurfaceLightingSettings | None = None,
     ) -> FrameResult:
         """Render a display-ready RGB frame.
 
@@ -59,6 +61,13 @@ class Renderer(ABC):
         avoid transferring intermediate arrays to the host.
         """
         from ..palettes import tone_mapped_colorize
+
+        if surface_lighting is not None and not isinstance(
+            surface_lighting, SurfaceLightingSettings
+        ):
+            raise ValueError(
+                "surface_lighting must be SurfaceLightingSettings or None"
+            )
 
         effective_tone_mapping = tone_mapping
         if tone_mapping == "auto" and request.fractal.value == "newton":
@@ -97,6 +106,18 @@ class Renderer(ABC):
             tone_state_locked,
         )
         color_seconds = time.perf_counter() - color_started
+
+        lighting_enabled = bool(
+            surface_lighting is not None and surface_lighting.enabled
+        )
+        lighting_seconds = 0.0
+        if lighting_enabled:
+            lighting_started = time.perf_counter()
+            rgb = apply_surface_lighting(
+                result.values, result.inside, rgb, surface_lighting
+            )
+            lighting_seconds = time.perf_counter() - lighting_started
+
         if implicit_state:
             self._automatic_tone_state = next_tone_state
             self._automatic_tone_scene_key = tone_scene_key
@@ -106,12 +127,28 @@ class Renderer(ABC):
             {
                 "compute_seconds": result.elapsed_seconds,
                 "color_seconds": color_seconds,
+                "surface_lighting_seconds": lighting_seconds,
+                "surface_lighting_enabled": lighting_enabled,
                 "transfer_seconds": details.get("transfer_seconds", 0.0),
                 "optimized_frame_path": False,
                 "tone_state": next_tone_state,
             }
         )
         details.update(tone_details)
+        if lighting_enabled and surface_lighting is not None:
+            details.update(
+                {
+                    "surface_lighting_strength": surface_lighting.strength,
+                    "surface_lighting_azimuth_degrees": (
+                        surface_lighting.azimuth_degrees
+                    ),
+                    "surface_lighting_elevation_degrees": (
+                        surface_lighting.elevation_degrees
+                    ),
+                    "surface_lighting_ambient": surface_lighting.ambient,
+                    "surface_lighting_diffuse": surface_lighting.diffuse,
+                }
+            )
         details["tone_mapping_requested"] = tone_mapping
         return FrameResult(
             rgb=rgb,
