@@ -11,7 +11,7 @@ parallelisierter CPU-Renderer zur Verfügung.
 - geglättete Escape-Time-Farbgebung, fünf Paletten und automatisches Tone Mapping
 - Maus-Zoom am Cursor, Verschieben durch Ziehen und Rechtsklick-Vorschläge für exakte Flugplan-Ziele
 - Echtzeitwiedergabe des gemeinsamen Flugplans mit separat einstellbarer Render-Skalierung
-- echte getrennte `float32`- und `float64`-Kernels
+- echte getrennte `float32`- und `float64`-Kernels sowie interne CUDA-Double-Single-Beschleunigung für geeignete Mandelbrot-`auto`-Frames
 - Deep-Zoom-Modus für Mandelbrot mit stabilem hochpräzisem Referenzorbit, echtem Rebasing und Glitch-Reparatur
 - automatische Backend-Auswahl: CUDA, falls verfügbar, sonst Numba-CPU
 - sichtbare GPU-Diagnose mit Gerät, Treiber, Compute Capability und Fehlergrund
@@ -76,12 +76,16 @@ fractal-studio
 Ab Version 0.6.0 unterstützt die App für das Mandelbrot-Fraktal einen
 stabilisierten Perturbationsmodus. Ein geeigneter hochpräziser Referenzorbit
 wird auf der CPU erzeugt und über zusammenhängende Pan-/Zoom-Frames hinweg
-wiederverwendet. Die Pixelabweichungen werden weiterhin auf CPU oder CUDA in
-`float64` ausgewertet. Dadurch lassen sich deutlich tiefere Zooms als mit
-direkter FP64-Berechnung erreichen, ohne dass schon kleinste Verschiebungen
-einen vollständig neuen numerischen Fehlerteppich erzeugen.
+wiederverwendet. Auf dem CPU-Backend und im expliziten Perturbationsmodus werden
+die Pixelabweichungen weiterhin in nativem `float64` ausgewertet. Auf CUDA kann
+`auto` für geeignete Referenzorbits stattdessen die intern aus zwei FP32-Werten
+gebildete Double-Single-Arithmetik verwenden. Nicht darstellbare Exponenten,
+Unterläufe oder andere Schutzbedingungen führen automatisch zurück zum nativen
+FP64-Kernel. Dadurch lassen sich deutlich tiefere Zooms als mit direkter
+FP64-Berechnung erreichen, ohne dass schon kleinste Verschiebungen einen
+vollständig neuen numerischen Fehlerteppich erzeugen.
 
-In der GUI stehen dazu zwei neue Einstellungen bereit:
+In der GUI stehen dazu zwei Einstellungen bereit:
 
 - **Berechnungsmodus**: `auto`, `direct` oder `perturbation`
 - **Referenzpräzision (Bits)**: 128 bis 1024
@@ -111,20 +115,23 @@ Erwartet werden `reference reused: True`, keine Klassifikationsfehler und
 ## Automatische Präzisionsleiter und Fluggrenze
 
 Im Berechnungsmodus **`auto`** ist `float32` die schnelle Startpräzision. Bevor
-die Pixelkoordinaten in diesem Format sichtbar quantisieren, wird der direkte
-Renderer automatisch auf `float64` angehoben. Sobald auch direkte FP64-
-Koordinaten nicht mehr genügend Abstand zwischen benachbarten Pixeln liefern,
-wechselt Mandelbrot automatisch in den Perturbationsmodus. Die Statuszeile
-zeigt Übergänge beispielsweise als `float32→float64` an. **`direct`** bleibt
-absichtlich strikt und führt keine automatische Hochstufung durch.
+die Pixelkoordinaten in diesem Format sichtbar quantisieren, wird der öffentliche
+Präzisionsstatus auf `float64` angehoben. Auf CUDA können geeignete Mandelbrot-
+Direktframes intern mit Double-Single gerechnet werden; sobald direkte
+Koordinaten nicht mehr sicher eindeutig bleiben, wechselt Mandelbrot in den
+Perturbationsmodus. Auch dort kann CUDA bei erfüllten Schutzbedingungen
+Double-Single für die Deltarechnung einsetzen. Die Statuszeile und Metadaten
+zeigen die öffentliche Präzision und die tatsächlich verwendete Arithmetik.
+**`direct`** bleibt absichtlich strikt und führt keine automatische Hochstufung
+durch; explizite FP64- und Perturbationsanforderungen bleiben native Referenzpfade.
 
-Ein Flug stoppt jetzt automatisch vor der numerischen Grenze. Die Endbreite
-wird aus der eingestellten Referenzpräzision, der Renderbreite und der weiterhin
-in `float64` ausgewerteten Pixel-Perturbation berechnet. Dadurch werden keine
-Frames mehr erzeugt, bei denen mehrere Pixel dieselbe Koordinate erhalten oder
-die Perturbationsabstände unterlaufen. Höhere **Referenzpräzision (Bits)**
-verschiebt diese Grenze weiter nach innen, kann aber die FP64-Grenze der
-Pixelabweichungen nicht aufheben.
+Ein Flug stoppt automatisch vor der numerischen Grenze. Die Endbreite wird aus
+der eingestellten Referenzpräzision, der Renderbreite und konservativen Grenzen
+für die relative Pixel-Perturbation abgeleitet. Dadurch werden keine Frames mehr
+erzeugt, bei denen mehrere Pixel dieselbe Koordinate erhalten oder die
+Perturbationsabstände unterlaufen. Höhere **Referenzpräzision (Bits)** verschiebt
+die Grenze weiter nach innen, kann aber die endliche Exponenten- und
+Darstellungsreichweite der GPU-Deltarechnung nicht aufheben.
 
 ## Automatisches Tone Mapping
 
@@ -176,6 +183,13 @@ Helligkeit, Kontrast und Farbverteilung zwischen benachbarten Frames ruhiger.
 Die Echtzeitwiedergabe verwendet dieselbe zeitabhängige Kamera-, Qualitäts- und Palettenauswertung wie Preflight und MP4-Export. Der Playhead folgt einer monotonen Echtzeituhr. Ist das Rendering langsamer als die Timeline, werden veraltete Zwischenpositionen nicht nachgeholt; nach dem fertigen Frame wird direkt die aktuellste Position gerendert.
 
 Für normale Vorschau und Flugplan-Wiedergabe kann die Render-Skalierung getrennt auf 50 %, 75 % oder 100 % gesetzt werden. Auf CUDA-Systemen ist 100 % voreingestellt; auf CPU-Systemen 75 %. Die Statuszeile trennt Rechnen/Transfer von der Tk-Anzeige.
+
+### Beispiel-Flugpläne
+
+Unter `examples/flight_plans/` liegen sechs direkt ladbare Schema-2-Pläne mit
+exakten Kamera-, Qualitäts- und Paletten-Zeitleisten. Drei kompakte Beispiele
+dauern etwa 68 bis 86 Sekunden; drei Langflüge dauern 3:30, 4:20 und 4:58 Minuten.
+Sie werden über **Flugplan → Öffnen …** geladen.
 
 ### MP4-Workflow
 
@@ -304,7 +318,7 @@ Die numerische `render()`-Schnittstelle bleibt für Tests und Analysen erhalten.
   wie WebGPU/wgpu oder Qt-RHI sinnvoll.
 - Generische GPU-Beschleunigung für AMD, Intel und Apple ist noch
   nicht implementiert. Auf diesen Systemen arbeitet der Numba-CPU-Renderer.
-- Der Referenzorbit und die hochpräzisen Viewport-Koordinaten werden auf der CPU erzeugt, die Pixelabweichungen selbst aber weiterhin in `float64` ausgewertet. Die App stoppt Flüge deshalb vor der aus Referenzbits und FP64-Perturbation abgeleiteten Grenze. Für noch tiefere Zooms wären skalierte Perturbation, Multi-Reference-Verfahren oder Series Approximation erforderlich.
+- Der Referenzorbit und die hochpräzisen Viewport-Koordinaten werden auf der CPU erzeugt. Die Pixelabweichungen laufen je nach Backend und Routing in nativem FP64 oder geschützter CUDA-Double-Single-Arithmetik; Double-Single erweitert den FP32-Exponentenbereich nicht. Die App stoppt Flüge deshalb vor der konservativ bestimmten Deltagrenze. Für noch tiefere Zooms wären skalierte Perturbation, Multi-Reference-Verfahren oder Series Approximation erforderlich.
 - 3D-Fraktale wie Mandelbulb sind noch nicht enthalten.
 
 Diese Grenzen sind bewusst: Das Repo liefert einen vollständig testbaren,

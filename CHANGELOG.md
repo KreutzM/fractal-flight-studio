@@ -2,52 +2,32 @@
 
 ## Unreleased
 
-### CUDA double-single direct rendering
+Keine unreleased Änderungen.
 
-- CUDA `auto` rendering now uses the benchmarked double-single Mandelbrot kernel after FP32 promotion and before the existing FP64 perturbation threshold.
-- Exact camera text is split on the CPU into FP32 high/low components; the GPU never assembles the camera in FP64 before splitting it.
-- Explicit `direct + float64`, non-Mandelbrot fractals, unsupported index ranges and FP32-exponent overflows keep the native FP64 path.
-- Render metadata preserves `precision=float64` and reports the internal `arithmetic` plus `double_single_enabled`.
+## 0.10.0 — 2026-07-31
 
-### Validation
+### CUDA Double-Single
 
-- Added routing, exact-coordinate-transfer and CUDA-simulator regressions for numerical output and the optimized RGB frame path.
+- Added a guarded internal Double-Single tier for eligible Mandelbrot `auto` direct rendering after FP32 promotion and before perturbation.
+- Added a guarded Double-Single perturbation-delta kernel while keeping the arbitrary-precision reference orbit on the CPU.
+- Preserved explicit native FP64 direct and perturbation modes as reference and safety paths.
+- Added conservative fallbacks for unsupported fractals, unsafe coordinate grids, FP32 exponent overflow or underflow, reference-orbit split loss and unsafe reference magnitudes.
+- Added diagnostic metadata for selected arithmetic, Double-Single mode and fallback reason.
 
+### Flight-plan workflow
 
-### Unified right-click flight targets
-
-- Right-click now opens a compact next-target proposal instead of starting an independent endless zoom flight.
-- Free targets can edit exact coordinates, target width, transition mode, quality profile, palette and palette transition before being appended.
-- Fresh plans are initialized from the exact camera used for the click only after the proposal is accepted; cancelling leaves the shared session unchanged.
-- Catalog quick actions and the visual target browser now use the same automatic transition planner and add/add-and-play workflow.
-- The visible legacy instant-flight controls were retired from the normal interface; real-time playback and MP4 export share the same flight plan.
-
-### Validation
-
-- Added regressions for exact suggested widths, fresh-plan initialization, cancellation safety and stale transition sources.
-- Extended the Xvfb GUI smoke test through right-click proposal, acceptance, save/reload and catalog transition creation.
-
-
-### Automatic multi-target transitions
-
-- Added deterministic `auto`, `direct`, `bridge`, `overview` and `cut` routing when appending catalog targets to a flight plan.
-- Auto mode chooses the smallest useful bridge width from exact center distance, viewport aspect ratio and both endpoint widths; it uses the full overview only when the bridge is already close to the root view.
-- Generated camera and render cues remain ordinary editable timeline entries. Quality requirements are raised before arrival, while palette handling can blend, hold or cut.
-- Added a compact target-transition dialog with route summary and “add and play” integration.
-
-### Real-time flight-plan playback
-
-- Added wall-clock-based play, pause, stop, seek, keyframe navigation and playback-rate controls for complete flight plans.
-- Interactive playback evaluates the same camera, quality and palette timeline used by preflight and MP4 export.
-- Slow renderers coalesce pending requests and jump directly to the latest playhead position instead of replaying obsolete intermediate frames.
-- Manual camera interaction pauses plan playback, while timeline previews and the main playback bar share one session playhead.
+- Added schema-2 scene and render tracks with exact decimal camera values, time-dependent quality cues and palette transitions.
+- Added deterministic real-time playback, seeking, playback rates and slow-render coalescing.
+- Added automatic `direct`, `bridge`, `overview` and `cut` transitions for catalog, browser and right-click targets.
+- Unified interactive playback, preflight and MP4 export around the same flight-plan evaluation path.
+- Added six directly loadable Mandelbrot example plans, including three extended flights lasting 3:30, 4:20 and 4:58.
 
 ### Validation
 
-- Added transition-planner regressions for direct, bridge, overview and cut routes, aspect-ratio-aware bridge geometry, exact target coordinates, render-cue merging and atomic session updates.
-- Extended the Xvfb GUI smoke test to append a catalog target through the transition workflow.
-- Added deterministic controller tests for monotonic timing, pause/resume, seeking, rates and end-of-plan behavior.
-- Extended the Xvfb GUI smoke test to cover seek, play, pause and stop.
+- Validated direct Double-Single production routing on an RTX 3060 with substantial speedups across exterior, interior, boundary and deep-zoom targets and a clean handoff to perturbation.
+- Validated guarded Double-Single perturbation on an RTX 3060 across six eligible deep-zoom targets at 1.87× to 2.99× native-FP64 speed, with identical inside, glitch and rebase decisions.
+- Confirmed the intentional exponent-range case falls back to native FP64 with the expected diagnostic reason.
+- Expanded automated coverage to 265 tests and kept Windows/Ubuntu Python 3.11–3.13, GUI smoke, pan stability, wheel build and repository snapshot green.
 
 ## 0.9.0 — 2026-07-26
 
