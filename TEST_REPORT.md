@@ -1,136 +1,90 @@
 # Test report
 
-Date: 2026-07-26
+Date: 2026-07-31
+Release candidate: 0.10.0
+Repository head before this documentation PR: `02f7f4989d0bba8e5c153debfa5cc8eee30394c8`
 
-## Environment
+## Scope
 
-- Linux x86-64 build environment
-- Python 3.13.5
-- physical runtime backend available here: `cpu-numba`
-- no NVIDIA driver or physical CUDA device exposed to the build environment
-- GUI tested with Tk under Xvfb
+This report summarizes the durable validation state after the unified flight-plan
+workflow, production CUDA Double-Single direct rendering, guarded Double-Single
+perturbation and the six bundled example flight plans.
 
-## Architecture refactor under test
+## Automated validation
 
-- exact-text `CameraState` as the canonical interactive camera model
-- Tk-independent render-generation and worker lifecycle controller
-- Tk-independent flight target, limit-step and last-good-frame controller
-- GUI adapters reduced to widget wiring, status presentation and quality-gate integration
-- documented component boundaries for the upcoming browser, keyframe and video work
+The most recent feature branch completed:
 
-## Version 0.9.0 changes under test
+- Python source compilation;
+- 265 tests across focused and remaining deterministic groups;
+- Windows and Ubuntu CI on Python 3.11, 3.12 and 3.13;
+- Tk/Xvfb GUI smoke coverage;
+- CPU pan-stability validation;
+- wheel build and package-data checks;
+- repository snapshot validation.
 
-- packaged JSON catalog with ten curated Mandelbrot deep-zoom targets
-- schema and value validation for IDs, names, exact coordinate text, positive
-  viewport widths, recommendations, tags, palettes and HTTPS sources
-- compact GUI selector for applying a catalog entry as a flight target
-- direct loading of a complete target view with recommended iterations,
-  reference bits and palette
-- preservation of the existing free right-click target workflow
-- package-data inclusion of the catalog in the built wheel
-- searchable visual target browser with tag filters and packaged previews
-- reproducible CPU generation of the compressed atlas of ten 48×30 XPM target previews
+The example-flight tests load every bundled schema-2 document through the
+production parser, require deterministic serialization, evaluate complete
+timelines, check distinct deep endpoints and constrain the extended examples to
+180–300 seconds.
 
-## Existing coverage retained
+## Physical RTX 3060 validation
 
-- automatic FP32-to-FP64-to-perturbation precision transitions
-- stable perturbation reference reuse and CPU/CUDA-compatible grid boundaries
-- visual flight-quality rejection and last-good-frame restoration
-- automatic robust tone mapping with temporal smoothing
-- CPU rendering, service API, CLI rendering and Windows launcher checks
+### Direct Double-Single
 
-## Executed checks
+The production `auto` path promoted public precision from FP32 to FP64 and used
+internal Double-Single arithmetic for eligible Mandelbrot direct frames. The
+initial production-shaped Seahorse Valley measurement reported 8.111 ms versus
+39.517 ms for explicit native FP64, a 4.87× median speedup.
 
-### Static compilation
+The broader 1280×720 matrix covered exterior, interior, cusp, Seahorse Valley,
+Seahorse satellite, a near-direct-coordinate floor and the transition to
+perturbation. Compute-heavy cases measured approximately 3.4× to 5.0× faster
+than native FP64; the short exterior case measured 1.87×. Stable regions were
+byte-identical or nearly identical. Chaotic boundary cases retained small
+frame-wide deltas and at most 0.1993% inside-mask divergence against FP64. The
+validated deeper case switched to perturbation before direct-coordinate
+uniqueness failed.
 
-```bash
-PYTHONPATH=src python -m compileall -q src tests scripts
-```
+### Double-Single perturbation
 
-Result: passed locally.
+The production Seahorse deep-zoom check at 1280×720, 1200 iterations and a
+384-bit CPU reference orbit measured 149.735 ms for Double-Single and 443.391 ms
+for explicit native FP64, a 2.961× speedup. All 921,600 pixels matched exactly
+for normalized values, inside decisions, glitch flags and rebase flags.
 
-### Full test suite
+The seven-case physical matrix validated six eligible targets plus one guarded
+fallback. Eligible targets measured 1.872× to 2.988× faster than native FP64.
+All cases had zero inside, glitch and rebase mismatches. Five Double-Single cases
+had zero value delta; the short Misiurewicz `-2` case had maximum normalized
+delta `1.863e-9` while preserving identical classification and flags. The
+intentional tiny-reference case correctly selected native FP64 with fallback
+reason `reference-magnitude-range`.
 
-```bash
-PYTHONPATH=src python -m pytest -q
-```
+## Numerical invariants retained
 
-Result: `69 passed` locally.
+- Deep viewport centers, widths, reference anchors and offsets remain exact text
+  or arbitrary-precision values until renderer setup.
+- The high-precision perturbation reference orbit remains on the CPU.
+- Rebasing never reconstructs the deep parameter as an absolute FP64 value.
+- Explicit native FP64 remains available as a reference and safety path.
+- Double-Single does not extend the FP32 exponent range; conservative guards
+  delegate unsupported cases to native FP64.
+- Integer-pixel pan overlap remains stable with a reused reference orbit.
 
-New coverage includes:
+## Flight-plan and visual validation
 
-- loading all ten packaged targets
-- unique catalog IDs and case-insensitive names
-- exact preservation of deep coordinate and width strings
-- rejection of duplicate target IDs
-- application of recommended fractal, iteration, reference-bit and palette
-  settings
-- separate behavior for setting a flight target and loading its complete view
-- deep-precision pan and zoom through the canonical camera state
-- render invalidation coalescing and executor-submission recovery
-- flight last-good-frame ownership and final-frame quality-gate behavior
-- target-browser search across names, descriptions and tags
-- combined category and query filtering with stable catalog ordering
-- packaged preview dimensions and visual diversity checks
+Six example plans are bundled under `examples/flight_plans/`. Their final views
+were selected from structure-rich subregions and checked with the existing
+visual-quality classifier. The extended examples last 3:30, 4:20 and 4:58 and
+use active camera movement, target correction, zooming and relocation rather
+than long static holds.
 
-### Curated-target render validation
+## Remaining validation boundaries
 
-Each packaged target was rendered through the CPU auto renderer at 120×80 using
-its recommended iteration count, reference precision and palette. The existing
-visual flight-quality classifier accepted all ten results; none collapsed into
-a uniform field or repeated two-dimensional pixel blocks at the stored initial
-view.
-
-Result: `10/10` target views accepted.
-
-### CPU pan stability
-
-```bash
-PYTHONPATH=src python scripts/check_pan_stability.py --backend cpu
-```
-
-Result:
-
-```text
-reference reused: True
-maximum overlapping value difference: 0
-inside/outside mismatches: 0
-result: STABLE
-```
-
-### GUI smoke test
-
-```bash
-xvfb-run -a env PYTHONPATH=src python scripts/gui_smoke.py
-```
-
-Result: passed locally. The smoke test loads the catalog, applies the first
-entry as an exact flight target, opens the visual browser and filters it by
-search text.
-
-### Wheel build and package data
-
-```bash
-python -m pip wheel . --no-deps --no-build-isolation -w dist
-```
-
-Result: `fractal_flight_studio-0.9.0-py3-none-any.whl` built locally. Inspection
-confirmed the catalog, `target_browser.py` and the packaged compressed preview atlas.
-
-### Reproducible thumbnail generation
-
-```bash
-PYTHONPATH=src python scripts/generate_target_thumbnails.py
-```
-
-Result: all ten previews were regenerated byte-for-byte identically. The
-combined SHA-256 over the ordered preview hashes remained
-`aaea3eef3857688b7e32b224cf7a6a8ae37184a766ed4374f20ca8e24cc9e77b`.
-
-## Not validated locally
-
-- physical RTX 3060 behavior or performance
-- native Windows CUDA code generation and packaging
-- subjective ranking of the curated targets on the target display
-- user-managed favorites, catalog import/export, timeline and offline-video
-  workflows, which are intentionally outside this PR
+- Physical performance results currently target the RTX 3060 and should not be
+  generalized to all NVIDIA architectures without measurement.
+- CUDA-simulator tests establish functional execution, not physical performance
+  or driver compatibility.
+- Subjective visual ranking of palettes and routes remains display- and
+  preference-dependent.
+- AMD, Intel and Apple GPU backends are not implemented.
