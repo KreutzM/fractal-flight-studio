@@ -8,6 +8,9 @@
   azimuth and elevation.
 - Applied the current lighting settings to interactive preview, flight-plan
   playback and PNG export while keeping the default disabled output unchanged.
+- Added schema-3 persistence with backward-compatible schema-1/schema-2 migration.
+- Synchronized loaded plans back into the GUI and reused one immutable lighting
+  value for preflight, temporal tone analysis and final MP4 rendering.
 - Exposed lighting time in the GUI status line and extended GUI smoke coverage.
 
 
