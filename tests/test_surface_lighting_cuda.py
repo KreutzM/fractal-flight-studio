@@ -166,3 +166,21 @@ print("CUDA locked auto-tone surface lighting passed")
         timeout=180,
     )
     assert "passed" in completed.stdout
+
+
+def test_physical_validation_cases_match_router_expectations() -> None:
+    from scripts.check_cuda_surface_lighting import _cases
+    from fractal_flight_studio.deep_zoom import should_use_perturbation
+
+    planned = {
+        case.id: (
+            "perturbation" if should_use_perturbation(case.request) else "direct"
+        )
+        for case in _cases(320, 180)
+    }
+
+    assert planned == {
+        "direct-fp32": "direct",
+        "direct-double-single": "direct",
+        "deep-double-single-perturbation": "perturbation",
+    }
