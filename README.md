@@ -175,6 +175,11 @@ der lokalen Escape-Wert-Neigung. Sie verändert weder Iterationen noch
 Inside/Outside-Klassifikation. In der linken Seitenleiste aktivieren
 **Reliefbeleuchtung aktiv**, **Stärke**, **Azimut** und **Höhe** den Effekt für
 interaktive Vorschau, Flugplan-Wiedergabe, PNG-Export, Preflight und MP4-Export.
+Das Preset-Menü bietet **Sanft**, **Dramatisch**, **Seitenlicht**, **Gegenlicht**
+und **Toplicht**. Jedes Preset setzt deterministisch auch den nicht separat
+angezeigten Ambient-/Diffuse-Anteil; eine manuelle Änderung wechselt automatisch
+auf **Benutzerdefiniert**. Gespeichert werden weiterhin nur die sechs vollständigen
+Lighting-Werte, sodass Presets keinen neuen Dateiformat-Zustand einführen.
 Die Einstellungen werden global im Schema-3-Flugplan gespeichert und beim Öffnen
 wieder in die GUI übernommen. Schema-1-Pläne übernehmen die Import-Defaults;
 Schema-2-Pläne werden kompatibel mit deaktivierter Beleuchtung geladen.
