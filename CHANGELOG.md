@@ -6,6 +6,8 @@
 
 - Added compact GUI controls for enabling relief lighting and adjusting strength,
   azimuth and elevation.
+- Added deterministic presets for soft, dramatic, side, rim and top lighting;
+  manual changes remain available as a custom configuration.
 - Applied the current lighting settings to interactive preview, flight-plan
   playback and PNG export while keeping the default disabled output unchanged.
 - Added schema-3 persistence with backward-compatible schema-1/schema-2 migration.
