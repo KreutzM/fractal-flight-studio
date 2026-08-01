@@ -5,7 +5,12 @@ from pathlib import Path
 import mpmath as mp
 import pytest
 
-from fractal_flight_studio.flight_plan_io import load_flight_plan, serialize_flight_plan
+from fractal_flight_studio.flight_plan_io import (
+    FLIGHT_PLAN_SCHEMA_VERSION,
+    load_flight_plan,
+    deserialize_flight_plan,
+    serialize_flight_plan,
+)
 from fractal_flight_studio.models import FractalKind
 
 
@@ -66,7 +71,10 @@ def test_example_flight_plan_is_long_deep_and_deterministic(filename: str) -> No
     assert final.center_y_text == expected_y
     assert mp.mpf(final.view_width_text) == mp.mpf(expected_width)
     assert mp.mpf(final.view_width_text) <= mp.mpf("1e-8")
-    assert serialize_flight_plan(document) == path.read_text(encoding="utf-8")
+    assert document.source_schema_version == 2
+    migrated = deserialize_flight_plan(serialize_flight_plan(document))
+    assert migrated.source_schema_version == FLIGHT_PLAN_SCHEMA_VERSION
+    assert migrated == document
 
 
 @pytest.mark.parametrize("filename", EXPECTED)

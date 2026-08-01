@@ -11,6 +11,7 @@ from .camera import CameraState
 from .flight_path import CameraPath
 from .models import FractalKind, RenderRequest
 from .palettes import PaletteBlend, PaletteInput, palette_names
+from .surface_lighting import SurfaceLightingSettings
 
 
 def _finite_decimal(text: str, label: str, *, digits: int = 80) -> mp.mpf:
@@ -289,10 +290,11 @@ class RenderTrack:
 
 @dataclass(frozen=True, slots=True)
 class FlightPlanDefaults:
-    """Defaults used when importing the legacy camera-only schema."""
+    """Defaults used when importing legacy flight-plan schemas."""
 
     scene: FlightScene = FlightScene()
     render_profile: RenderProfile = RenderProfile()
+    surface_lighting: SurfaceLightingSettings = SurfaceLightingSettings()
 
 
 @dataclass(frozen=True, slots=True)
@@ -341,7 +343,8 @@ class FlightPlanDocument:
     path: CameraPath
     scene: FlightScene = FlightScene()
     render_track: RenderTrack | None = None
-    source_schema_version: int = field(default=2, compare=False, repr=False)
+    surface_lighting: SurfaceLightingSettings = SurfaceLightingSettings()
+    source_schema_version: int = field(default=3, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         name = _validated_name(self.name)
@@ -350,6 +353,10 @@ class FlightPlanDocument:
             self.source_schema_version, int
         ):
             raise ValueError("source schema version must be an integer")
+        if not isinstance(self.surface_lighting, SurfaceLightingSettings):
+            raise ValueError(
+                "flight-plan surface_lighting must be SurfaceLightingSettings"
+            )
         render_track = self.render_track
         if render_track is None:
             render_track = RenderTrack.default(digits=self.path.digits)
@@ -398,6 +405,21 @@ FlightSource: TypeAlias = CameraPath | FlightPlanDocument
 
 def flight_path_for(source: FlightSource) -> CameraPath:
     return source.path if isinstance(source, FlightPlanDocument) else source
+
+
+def surface_lighting_for(
+    source: FlightSource,
+    fallback: SurfaceLightingSettings | None = None,
+) -> SurfaceLightingSettings:
+    """Resolve the immutable lighting contract for a complete render session."""
+
+    if isinstance(source, FlightPlanDocument):
+        return source.surface_lighting
+    if fallback is None:
+        return SurfaceLightingSettings()
+    if not isinstance(fallback, SurfaceLightingSettings):
+        raise ValueError("surface_lighting fallback must be SurfaceLightingSettings")
+    return fallback
 
 
 def evaluate_flight_frame(
@@ -476,4 +498,12 @@ def flight_plan_fingerprint(source: FlightSource) -> tuple[object, ...]:
         source.scene.julia_c_real_text,
         source.scene.julia_c_imag_text,
         render,
+        (
+            source.surface_lighting.enabled,
+            source.surface_lighting.strength,
+            source.surface_lighting.azimuth_degrees,
+            source.surface_lighting.elevation_degrees,
+            source.surface_lighting.ambient,
+            source.surface_lighting.diffuse,
+        ),
     )

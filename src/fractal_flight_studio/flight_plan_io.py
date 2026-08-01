@@ -18,10 +18,11 @@ from .flight_plan import (
     RenderTrack,
 )
 from .models import FractalKind
+from .surface_lighting import SurfaceLightingSettings
 
 FLIGHT_PLAN_FORMAT = "fractal-flight-studio.flight-plan"
 LEGACY_FLIGHT_PLAN_FORMAT = "fractal-flight-studio.camera-path"
-FLIGHT_PLAN_SCHEMA_VERSION = 2
+FLIGHT_PLAN_SCHEMA_VERSION = 3
 FLIGHT_PLAN_EXTENSION = ".fractal-flight.json"
 MAX_FLIGHT_PLAN_BYTES = 10 * 1024 * 1024
 MAX_FLIGHT_PLAN_KEYFRAMES = 100_000
@@ -50,6 +51,14 @@ def flight_plan_to_dict(document: FlightPlanDocument) -> dict[str, Any]:
             "exponent": document.scene.exponent,
             "julia_c_real": document.scene.julia_c_real_text,
             "julia_c_imag": document.scene.julia_c_imag_text,
+        },
+        "surface_lighting": {
+            "enabled": document.surface_lighting.enabled,
+            "strength": document.surface_lighting.strength,
+            "azimuth_degrees": document.surface_lighting.azimuth_degrees,
+            "elevation_degrees": document.surface_lighting.elevation_degrees,
+            "ambient": document.surface_lighting.ambient,
+            "diffuse": document.surface_lighting.diffuse,
         },
         "camera_keyframes": [
             {
@@ -120,10 +129,12 @@ def deserialize_flight_plan(
         raise FlightPlanFormatError(f"{source}: schema_version must be an integer")
     if version == 1:
         return _deserialize_v1(root, source=source, defaults=migration_defaults)
-    if version == FLIGHT_PLAN_SCHEMA_VERSION:
+    if version == 2:
         return _deserialize_v2(root, source=source)
+    if version == FLIGHT_PLAN_SCHEMA_VERSION:
+        return _deserialize_v3(root, source=source)
     raise FlightPlanFormatError(
-        f"{source}: unsupported schema_version {version}; supported versions are 1 and "
+        f"{source}: unsupported schema_version {version}; supported versions are 1, 2 and "
         f"{FLIGHT_PLAN_SCHEMA_VERSION}"
     )
 
@@ -225,6 +236,7 @@ def _deserialize_v1(
             path,
             defaults.scene,
             RenderTrack.default(defaults.render_profile, digits=digits),
+            defaults.surface_lighting,
             source_schema_version=1,
         )
     except ValueError as exc:
@@ -270,10 +282,100 @@ def _deserialize_v2(
             path,
             scene,
             render_track,
+            SurfaceLightingSettings(),
             source_schema_version=2,
         )
     except ValueError as exc:
         raise FlightPlanFormatError(f"{source}: invalid flight plan: {exc}") from exc
+
+
+def _deserialize_v3(
+    root: Mapping[str, Any],
+    *,
+    source: str,
+) -> FlightPlanDocument:
+    _require_exact_keys(
+        root,
+        {
+            "format",
+            "schema_version",
+            "name",
+            "digits",
+            "scene",
+            "surface_lighting",
+            "camera_keyframes",
+            "render_cues",
+        },
+        source,
+    )
+    if root["format"] != FLIGHT_PLAN_FORMAT:
+        raise FlightPlanFormatError(f"{source}: format must be {FLIGHT_PLAN_FORMAT!r}")
+    name = _require_string(root["name"], f"{source}: name")
+    digits = _validated_digits(root["digits"], source=source)
+    scene = _deserialize_scene(root["scene"], source=source)
+    surface_lighting = _deserialize_surface_lighting(
+        root["surface_lighting"], source=source
+    )
+    path = _deserialize_camera_track(
+        root["camera_keyframes"],
+        digits=digits,
+        source=source,
+    )
+    render_track = _deserialize_render_track(
+        root["render_cues"],
+        digits=digits,
+        source=source,
+    )
+    try:
+        return FlightPlanDocument(
+            name,
+            path,
+            scene,
+            render_track,
+            surface_lighting,
+            source_schema_version=3,
+        )
+    except ValueError as exc:
+        raise FlightPlanFormatError(f"{source}: invalid flight plan: {exc}") from exc
+
+
+def _deserialize_surface_lighting(
+    value: Any,
+    *,
+    source: str,
+) -> SurfaceLightingSettings:
+    label = f"{source}: surface_lighting"
+    lighting = _require_object(value, label)
+    _require_exact_keys(
+        lighting,
+        {
+            "enabled",
+            "strength",
+            "azimuth_degrees",
+            "elevation_degrees",
+            "ambient",
+            "diffuse",
+        },
+        label,
+    )
+    enabled = lighting["enabled"]
+    if type(enabled) is not bool:
+        raise FlightPlanFormatError(f"{label}.enabled must be a boolean")
+    try:
+        return SurfaceLightingSettings(
+            enabled=enabled,
+            strength=_require_number(lighting["strength"], f"{label}.strength"),
+            azimuth_degrees=_require_number(
+                lighting["azimuth_degrees"], f"{label}.azimuth_degrees"
+            ),
+            elevation_degrees=_require_number(
+                lighting["elevation_degrees"], f"{label}.elevation_degrees"
+            ),
+            ambient=_require_number(lighting["ambient"], f"{label}.ambient"),
+            diffuse=_require_number(lighting["diffuse"], f"{label}.diffuse"),
+        )
+    except ValueError as exc:
+        raise FlightPlanFormatError(f"{label}: {exc}") from exc
 
 
 def _deserialize_scene(value: Any, *, source: str) -> FlightScene:
@@ -444,6 +546,12 @@ def _require_string(value: Any, label: str) -> str:
     if not isinstance(value, str):
         raise FlightPlanFormatError(f"{label} must be a string")
     return value
+
+
+def _require_number(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise FlightPlanFormatError(f"{label} must be a number")
+    return float(value)
 
 
 def _require_exact_keys(
