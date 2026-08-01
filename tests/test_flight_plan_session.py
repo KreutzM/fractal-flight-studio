@@ -20,6 +20,7 @@ from fractal_flight_studio.flight_plan import (
 )
 from fractal_flight_studio.flight_plan_session import FlightPlanSession
 from fractal_flight_studio.models import FractalKind
+from fractal_flight_studio.surface_lighting import SurfaceLightingSettings
 
 
 def _path(*, digits: int = 96) -> CameraPath:
@@ -42,6 +43,7 @@ def test_new_session_owns_partial_draft_until_second_keyframe_is_added() -> None
         digits=96,
         scene=FlightScene(FractalKind.MANDELBROT, 2),
         render_profile=RenderProfile(900, 384, "inferno", "1.5"),
+        surface_lighting=SurfaceLightingSettings(enabled=True, strength=1.9),
     )
     notifications: list[bool] = []
     session.add_listener(lambda current: notifications.append(current.dirty))
@@ -50,6 +52,7 @@ def test_new_session_owns_partial_draft_until_second_keyframe_is_added() -> None
     assert not session.valid
     assert "zwei" in session.validation_error.lower()
     assert session.render_track.first_profile.max_iterations == 900
+    assert session.surface_lighting.enabled
 
     session.set_camera_draft(
         session.camera_draft.add_keyframe(
@@ -80,6 +83,7 @@ def test_session_loads_document_and_centralizes_file_dirty_selection_and_playhea
             ),
             digits=96,
         ),
+        SurfaceLightingSettings(enabled=True, azimuth_degrees=120.0),
     )
     session = FlightPlanSession.new(CameraState(), digits=96)
     path = Path("loaded.fractal-flight.json")
@@ -91,6 +95,7 @@ def test_session_loads_document_and_centralizes_file_dirty_selection_and_playhea
     assert session.camera_path == document.path
     assert session.scene == document.scene
     assert session.render_track == document.render_track
+    assert session.surface_lighting == document.surface_lighting
     assert session.name == "Loaded"
     assert session.file_path == path
     assert not session.dirty
@@ -117,12 +122,14 @@ def test_sync_primary_settings_updates_scene_and_first_cue_without_losing_later_
     session.set_camera_path(_path(), mark_dirty=False)
     new_scene = FlightScene(FractalKind.JULIA, 3, "-0.4", "0.6")
     new_profile = RenderProfile(1200, 512, "ember", "1.75")
+    new_lighting = SurfaceLightingSettings(enabled=True, strength=2.1)
 
-    session.sync_primary_settings(new_scene, new_profile)
+    session.sync_primary_settings(new_scene, new_profile, new_lighting)
 
     assert session.scene == new_scene
     assert session.render_track.cues[0].profile == new_profile
     assert session.render_track.cues[1] == track.cues[1]
+    assert session.surface_lighting == new_lighting
     assert session.dirty
 
 
