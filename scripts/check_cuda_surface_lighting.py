@@ -12,6 +12,7 @@ from typing import Iterable
 import numba
 import numpy as np
 
+from fractal_flight_studio.deep_zoom import should_use_perturbation
 from fractal_flight_studio.models import Precision, RenderMode, RenderRequest, Viewport
 from fractal_flight_studio.palettes import tone_mapped_colorize
 from fractal_flight_studio.renderers.cuda_double_single_renderer import CudaRenderer
@@ -70,11 +71,11 @@ def _cases(width: int, height: int) -> tuple[ValidationCase, ...]:
                 reference_bits=384,
                 center_x_text="-0.743643887037151",
                 center_y_text="0.13182590420533",
-                view_width_text="5e-13",
+                view_width_text="1e-13",
                 viewport=Viewport(
                     -0.743643887037151,
                     0.13182590420533,
-                    5e-13,
+                    1e-13,
                 ),
             ),
             "double-single",
@@ -112,6 +113,15 @@ def validate_case(
     settings: SurfaceLightingSettings,
     repeats: int,
 ) -> dict[str, object]:
+    planned_render_mode = (
+        "perturbation" if should_use_perturbation(case.request) else "direct"
+    )
+    if planned_render_mode != case.expected_render_mode:
+        raise RuntimeError(
+            f"validation case {case.id!r} plans {planned_render_mode}, "
+            f"expected {case.expected_render_mode}; adjust its view or dimensions"
+        )
+
     rendered = renderer.render(case.request)
     colored, _tone_state, _tone_details = tone_mapped_colorize(
         rendered.values,
@@ -174,6 +184,7 @@ def validate_case(
         "optimized_frame_path": optimized,
         "transfer": transfer,
         "render_mode": render_mode,
+        "planned_render_mode": planned_render_mode,
         "arithmetic": arithmetic,
         "expected_render_mode": case.expected_render_mode,
         "expected_arithmetic": case.expected_arithmetic,
