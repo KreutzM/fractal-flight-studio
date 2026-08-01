@@ -174,6 +174,7 @@ def main() -> int:
     app._play_flight_plan()
     assert app.flight_plan_playback.playing
     app._pause_flight_plan(request_render=False)
+    assert app.flight_plan_playback.paused
     app._stop_flight_plan(request_render=False)
     assert app.flight_plan_playback.state.value == "stopped"
     assert app.flight_plan_playback.playhead_seconds == 0.0
