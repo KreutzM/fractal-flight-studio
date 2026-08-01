@@ -14,6 +14,7 @@ from .flight_plan import (
     RenderTrack,
 )
 from .path_editor import CameraPathDraft
+from .surface_lighting import SurfaceLightingSettings
 
 if TYPE_CHECKING:
     from .flight_transition import TransitionPlan
@@ -31,6 +32,7 @@ class FlightPlanSession:
         camera_draft: CameraPathDraft,
         scene: FlightScene = FlightScene(),
         render_track: RenderTrack | None = None,
+        surface_lighting: SurfaceLightingSettings = SurfaceLightingSettings(),
         name: str = "Unbenannter Flugplan",
         file_path: Path | None = None,
         dirty: bool = False,
@@ -38,6 +40,9 @@ class FlightPlanSession:
         self._camera_draft = camera_draft
         self._scene = scene
         self._render_track = render_track or RenderTrack.default(digits=camera_draft.digits)
+        if not isinstance(surface_lighting, SurfaceLightingSettings):
+            raise ValueError("surface_lighting must be SurfaceLightingSettings")
+        self._surface_lighting = surface_lighting
         if self._render_track.digits != camera_draft.digits:
             raise ValueError("camera draft and render track must use the same precision")
         self._name = name
@@ -56,6 +61,7 @@ class FlightPlanSession:
         digits: int,
         scene: FlightScene = FlightScene(),
         render_profile: RenderProfile = RenderProfile(),
+        surface_lighting: SurfaceLightingSettings = SurfaceLightingSettings(),
         name: str = "Unbenannter Flugplan",
     ) -> "FlightPlanSession":
         draft = CameraPathDraft(digits=digits).add_keyframe(
@@ -68,6 +74,7 @@ class FlightPlanSession:
             camera_draft=draft,
             scene=scene,
             render_track=RenderTrack.default(render_profile, digits=digits),
+            surface_lighting=surface_lighting,
             name=name,
         )
 
@@ -88,6 +95,10 @@ class FlightPlanSession:
     @property
     def render_track(self) -> RenderTrack:
         return self._render_track
+
+    @property
+    def surface_lighting(self) -> SurfaceLightingSettings:
+        return self._surface_lighting
 
     @property
     def name(self) -> str:
@@ -131,6 +142,7 @@ class FlightPlanSession:
             path,
             self._scene,
             self._render_track,
+            self._surface_lighting,
         )
 
     def add_listener(self, listener: SessionListener, *, notify: bool = False) -> None:
@@ -176,6 +188,7 @@ class FlightPlanSession:
         self._camera_draft = CameraPathDraft.from_path(document.path)
         self._scene = document.scene
         self._render_track = document.render_track
+        self._surface_lighting = document.surface_lighting
         self._name = document.name
         self._file_path = file_path
         self._dirty = bool(dirty)
@@ -265,7 +278,13 @@ class FlightPlanSession:
         )
         # Validate the complete candidate before mutating the shared session.
         path = draft.build_path()
-        FlightPlanDocument(self._name, path, scene, track)
+        FlightPlanDocument(
+            self._name,
+            path,
+            scene,
+            track,
+            self._surface_lighting,
+        )
 
         self._camera_draft = draft
         self._scene = scene
@@ -313,18 +332,46 @@ class FlightPlanSession:
             self._dirty = True
         self._notify()
 
+    def set_surface_lighting(
+        self,
+        settings: SurfaceLightingSettings,
+        *,
+        mark_dirty: bool = True,
+    ) -> None:
+        if not isinstance(settings, SurfaceLightingSettings):
+            raise ValueError("surface_lighting must be SurfaceLightingSettings")
+        if settings == self._surface_lighting:
+            return
+        self._surface_lighting = settings
+        if mark_dirty:
+            self._dirty = True
+        self._notify()
+
     def sync_primary_settings(
         self,
         scene: FlightScene,
         profile: RenderProfile,
+        surface_lighting: SurfaceLightingSettings | None = None,
         *,
         mark_dirty: bool = True,
     ) -> None:
         track = self._render_track.replace_first_profile(profile)
-        if scene == self._scene and track == self._render_track:
+        lighting = (
+            self._surface_lighting
+            if surface_lighting is None
+            else surface_lighting
+        )
+        if not isinstance(lighting, SurfaceLightingSettings):
+            raise ValueError("surface_lighting must be SurfaceLightingSettings")
+        if (
+            scene == self._scene
+            and track == self._render_track
+            and lighting == self._surface_lighting
+        ):
             return
         self._scene = scene
         self._render_track = track
+        self._surface_lighting = lighting
         if mark_dirty:
             self._dirty = True
         self._notify()
@@ -379,6 +426,7 @@ class FlightPlanSession:
                 path,
                 self._scene,
                 self._render_track,
+                self._surface_lighting,
             )
 
     def _notify(self) -> None:
