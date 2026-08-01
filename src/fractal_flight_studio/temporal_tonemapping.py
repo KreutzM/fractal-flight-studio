@@ -5,10 +5,11 @@ from enum import Enum
 from typing import Callable, Sequence
 
 from .ffmpeg_mp4 import CancellationCheck, Mp4ExportCancelled
-from .flight_plan import FlightSource, flight_plan_fingerprint
+from .flight_plan import FlightSource, flight_plan_fingerprint, surface_lighting_for
 from .models import RenderRequest
 from .palettes import PaletteInput, palette_cache_key
 from .offline_render import OfflineFramePlan, iter_offline_frame_jobs
+from .surface_lighting import SurfaceLightingSettings
 from .tonemapping import ToneMapState
 
 
@@ -79,6 +80,7 @@ def analyze_offline_tone_states(
     cycles: float = 1.0,
     phase: float = 0.0,
     tone_mapping: str = "auto",
+    surface_lighting: SurfaceLightingSettings | None = None,
     progress: ToneAnalysisCallback | None = None,
     cancellation_requested: CancellationCheck | None = None,
 ) -> tuple[ToneMapState | None, ...]:
@@ -89,6 +91,7 @@ def analyze_offline_tone_states(
     if settings.mode is ToneStability.PER_FRAME or tone_mapping == "linear":
         return tuple(None for _ in range(stop_index))
 
+    lighting = surface_lighting_for(source, surface_lighting)
     analysis_plan = replace(
         offline_plan,
         width=settings.analysis_width,
@@ -103,6 +106,7 @@ def analyze_offline_tone_states(
             phase,
         ),
         flight_plan_fingerprint(source),
+        lighting,
     )
     states: list[ToneMapState | None] = []
     for job in iter_offline_frame_jobs(
@@ -125,6 +129,7 @@ def analyze_offline_tone_states(
             tone_scene_key=scene_key,
             tone_smoothing=1.0,
             tone_state_locked=False,
+            surface_lighting=lighting,
         )
         state = frame.details.get("tone_state")
         if state is not None and not isinstance(state, ToneMapState):
