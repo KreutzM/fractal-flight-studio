@@ -6,12 +6,19 @@
 
 - Added compact GUI controls for enabling relief lighting and adjusting strength,
   azimuth and elevation.
+- Added deterministic presets for soft, dramatic, side, rim and top lighting;
+  manual changes remain available as a custom configuration.
 - Applied the current lighting settings to interactive preview, flight-plan
   playback and PNG export while keeping the default disabled output unchanged.
 - Added schema-3 persistence with backward-compatible schema-1/schema-2 migration.
 - Synchronized loaded plans back into the GUI and reused one immutable lighting
   value for preflight, temporal tone analysis and final MP4 rendering.
 - Exposed lighting time in the GUI status line and extended GUI smoke coverage.
+- Corrected the relief model to derive normals from the tone-mapped height field,
+  preserve flat-surface exposure and apply a calibrated screen-space slope scale;
+  this fixes the previous mostly uniform color darkening at high iteration counts.
+- Extended CPU/CUDA parity and physical RTX validation with a representative
+  auto-tone Seahorse view that must show measurable directional relief.
 
 
 ## 0.10.0 — 2026-07-31

@@ -5,6 +5,10 @@ from tkinter import ttk
 
 from .models import FractalKind, Precision, RenderMode
 from .palettes import palette_names
+from .surface_lighting import (
+    CUSTOM_SURFACE_LIGHTING_PRESET,
+    surface_lighting_preset_names,
+)
 
 
 def build_ui(app) -> None:
@@ -27,6 +31,9 @@ def build_ui(app) -> None:
     app.palette_var = tk.StringVar(value="inferno")
     app.iterations_var = tk.IntVar(value=400)
     app.cycles_var = tk.DoubleVar(value=1.0)
+    app.surface_lighting_preset_var = tk.StringVar(
+        value=CUSTOM_SURFACE_LIGHTING_PRESET
+    )
     app.surface_lighting_enabled_var = tk.BooleanVar(value=False)
     app.surface_lighting_strength_var = tk.DoubleVar(value=1.5)
     app.surface_lighting_azimuth_var = tk.DoubleVar(value=315.0)
@@ -134,7 +141,21 @@ def build_ui(app) -> None:
         text="Reliefbeleuchtung aktiv",
         variable=app.surface_lighting_enabled_var,
     ).grid(row=0, column=0, columnspan=3, sticky="w")
-    ttk.Label(lighting, text="Stärke").grid(row=1, column=0, sticky="w")
+    ttk.Label(lighting, text="Preset").grid(row=1, column=0, sticky="w")
+    app.surface_lighting_preset_combo = ttk.Combobox(
+        lighting,
+        textvariable=app.surface_lighting_preset_var,
+        values=surface_lighting_preset_names(),
+        state="readonly",
+        width=14,
+    )
+    app.surface_lighting_preset_combo.grid(
+        row=1, column=1, columnspan=2, sticky="ew", padx=(6, 0)
+    )
+    app.surface_lighting_preset_combo.bind(
+        "<<ComboboxSelected>>", app.apply_surface_lighting_preset
+    )
+    ttk.Label(lighting, text="Stärke").grid(row=2, column=0, sticky="w")
     strength = ttk.Spinbox(
         lighting,
         from_=0.0,
@@ -143,8 +164,8 @@ def build_ui(app) -> None:
         textvariable=app.surface_lighting_strength_var,
         width=7,
     )
-    strength.grid(row=1, column=1, sticky="ew", padx=(6, 0))
-    ttk.Label(lighting, text="Azimut").grid(row=2, column=0, sticky="w")
+    strength.grid(row=2, column=1, sticky="ew", padx=(6, 0))
+    ttk.Label(lighting, text="Azimut").grid(row=3, column=0, sticky="w")
     azimuth = ttk.Spinbox(
         lighting,
         from_=0.0,
@@ -153,8 +174,8 @@ def build_ui(app) -> None:
         textvariable=app.surface_lighting_azimuth_var,
         width=7,
     )
-    azimuth.grid(row=2, column=1, sticky="ew", padx=(6, 0))
-    ttk.Label(lighting, text="Höhe").grid(row=3, column=0, sticky="w")
+    azimuth.grid(row=3, column=1, sticky="ew", padx=(6, 0))
+    ttk.Label(lighting, text="Höhe").grid(row=4, column=0, sticky="w")
     elevation = ttk.Spinbox(
         lighting,
         from_=1.0,
@@ -163,9 +184,9 @@ def build_ui(app) -> None:
         textvariable=app.surface_lighting_elevation_var,
         width=7,
     )
-    elevation.grid(row=3, column=1, sticky="ew", padx=(6, 0))
-    ttk.Label(lighting, text="°", foreground="#555").grid(row=2, column=2, sticky="w")
+    elevation.grid(row=4, column=1, sticky="ew", padx=(6, 0))
     ttk.Label(lighting, text="°", foreground="#555").grid(row=3, column=2, sticky="w")
+    ttk.Label(lighting, text="°", foreground="#555").grid(row=4, column=2, sticky="w")
     lighting.columnconfigure(1, weight=1)
 
     lighting_controls = (strength, azimuth, elevation)
@@ -176,7 +197,15 @@ def build_ui(app) -> None:
             control.configure(state=state)
 
     app.surface_lighting_enabled_var.trace_add("write", update_lighting_controls)
+    for variable in (
+        app.surface_lighting_enabled_var,
+        app.surface_lighting_strength_var,
+        app.surface_lighting_azimuth_var,
+        app.surface_lighting_elevation_var,
+    ):
+        variable.trace_add("write", app._refresh_surface_lighting_preset)
     update_lighting_controls()
+    app._refresh_surface_lighting_preset()
     row += 1
 
     julia = ttk.LabelFrame(controls, text="Julia / Multibrot", padding=6)

@@ -9,7 +9,11 @@ import numpy as np
 
 from ..models import RenderRequest
 from ..palettes import PaletteInput
-from ..surface_lighting import SurfaceLightingSettings, apply_surface_lighting
+from ..surface_lighting import (
+    SURFACE_LIGHTING_SLOPE_SCALE,
+    SurfaceLightingSettings,
+    apply_surface_lighting,
+)
 
 
 @dataclass(slots=True)
@@ -114,7 +118,11 @@ class Renderer(ABC):
         if lighting_enabled:
             lighting_started = time.perf_counter()
             rgb = apply_surface_lighting(
-                result.values, result.inside, rgb, surface_lighting
+                result.values,
+                result.inside,
+                rgb,
+                surface_lighting,
+                tone_state=next_tone_state,
             )
             lighting_seconds = time.perf_counter() - lighting_started
 
@@ -147,6 +155,9 @@ class Renderer(ABC):
                     ),
                     "surface_lighting_ambient": surface_lighting.ambient,
                     "surface_lighting_diffuse": surface_lighting.diffuse,
+                    "surface_lighting_height_source": "tone-mapped",
+                    "surface_lighting_slope_scale": SURFACE_LIGHTING_SLOPE_SCALE,
+                    "surface_lighting_flat_neutral": True,
                 }
             )
         details["tone_mapping_requested"] = tone_mapping

@@ -66,6 +66,9 @@ for request in requests:
     assert actual.details["surface_lighting_seconds"] >= 0.0
     assert actual.details["surface_lighting_strength"] == settings.strength
     assert actual.details["surface_lighting_timing_scope"] == "host kernel launch"
+    assert actual.details["surface_lighting_height_source"] == "tone-mapped"
+    assert actual.details["surface_lighting_slope_scale"] == 4.0
+    assert actual.details["surface_lighting_flat_neutral"] is True
     assert actual.details["transfer"] == "single RGB readback"
 
 request = requests[0]
@@ -169,7 +172,7 @@ print("CUDA locked auto-tone surface lighting passed")
 
 
 def test_physical_validation_cases_match_router_expectations() -> None:
-    from scripts.check_cuda_surface_lighting import _cases
+    from scripts.check_cuda_surface_lighting import _auto_relief_request, _cases
     from fractal_flight_studio.deep_zoom import should_use_perturbation
 
     planned = {
@@ -184,3 +187,4 @@ def test_physical_validation_cases_match_router_expectations() -> None:
         "direct-double-single": "direct",
         "deep-double-single-perturbation": "perturbation",
     }
+    assert should_use_perturbation(_auto_relief_request(320, 180)) is False

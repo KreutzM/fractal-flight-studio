@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 import json
 from pathlib import Path
 import platform
@@ -81,6 +81,23 @@ def _cases(width: int, height: int) -> tuple[ValidationCase, ...]:
             "double-single",
             "perturbation",
         ),
+    )
+
+
+def _auto_relief_request(width: int, height: int) -> RenderRequest:
+    """Representative view where auto tone mapping must produce visible relief."""
+
+    return RenderRequest(
+        width=width,
+        height=height,
+        max_iterations=1200,
+        precision=Precision.FLOAT64,
+        render_mode=RenderMode.AUTO,
+        reference_bits=256,
+        center_x_text="-0.74364386269",
+        center_y_text="0.13182590271",
+        view_width_text="0.00000013526",
+        viewport=Viewport(-0.74364386269, 0.13182590271, 0.00000013526),
     )
 
 
@@ -196,6 +213,119 @@ def validate_case(
     }
 
 
+def validate_auto_relief(
+    renderer: CudaRenderer,
+    width: int,
+    height: int,
+    settings: SurfaceLightingSettings,
+) -> dict[str, object]:
+    request = _auto_relief_request(width, height)
+    planned_render_mode = "perturbation" if should_use_perturbation(request) else "direct"
+    if planned_render_mode != "direct":
+        raise RuntimeError(
+            "auto-relief validation must remain on the direct Double-Single route"
+        )
+
+    rendered = renderer.render(request)
+    scene_key = ("surface-lighting-auto-relief", width, height)
+    colored, tone_state, _tone_details = tone_mapped_colorize(
+        rendered.values,
+        rendered.inside,
+        palette="inferno",
+        tone_mapping="auto",
+        scene_key=scene_key,
+        tone_smoothing=1.0,
+    )
+    if tone_state is None:
+        raise RuntimeError("auto-relief validation did not produce a tone state")
+
+    expected = apply_surface_lighting(
+        rendered.values,
+        rendered.inside,
+        colored,
+        settings,
+        tone_state=tone_state,
+    )
+    frame_kwargs = {
+        "palette": "inferno",
+        "tone_mapping": "auto",
+        "tone_state": tone_state,
+        "tone_scene_key": scene_key,
+        "tone_state_locked": True,
+    }
+    baseline = renderer.render_frame(request, **frame_kwargs)
+    actual = renderer.render_frame(
+        request,
+        surface_lighting=settings,
+        **frame_kwargs,
+    )
+    opposite = renderer.render_frame(
+        request,
+        surface_lighting=replace(
+            settings,
+            azimuth_degrees=(settings.azimuth_degrees + 180.0) % 360.0,
+        ),
+        **frame_kwargs,
+    )
+
+    parity_delta = np.abs(actual.rgb.astype(np.int16) - expected.astype(np.int16))
+    maximum_delta = int(parity_delta.max(initial=0))
+    visible = np.any(baseline.rgb != 0, axis=2)
+    visible_count = int(np.count_nonzero(visible))
+    if visible_count == 0:
+        raise RuntimeError("auto-relief validation frame contains no visible pixels")
+
+    relief_delta = np.abs(
+        actual.rgb.astype(np.int16) - baseline.rgb.astype(np.int16)
+    )[visible]
+    direction_delta = np.abs(
+        actual.rgb.astype(np.int16) - opposite.rgb.astype(np.int16)
+    )[visible]
+    changed_fraction = float(
+        np.mean(np.any(actual.rgb != baseline.rgb, axis=2)[visible])
+    )
+    mean_relief_delta = float(relief_delta.mean())
+    mean_direction_delta = float(direction_delta.mean())
+    baseline_mean = float(baseline.rgb[visible].mean())
+    exposure_ratio = (
+        float(actual.rgb[visible].mean()) / baseline_mean if baseline_mean else 1.0
+    )
+    optimized = bool(actual.details.get("optimized_frame_path"))
+    transfer = str(actual.details.get("transfer", ""))
+    arithmetic = str(actual.details.get("arithmetic", ""))
+    render_mode = str(actual.details.get("render_mode", ""))
+
+    passed = (
+        maximum_delta <= 1
+        and mean_relief_delta >= 3.0
+        and mean_direction_delta >= 4.0
+        and changed_fraction >= 0.25
+        and 0.60 <= exposure_ratio <= 1.40
+        and optimized
+        and transfer == "single RGB readback"
+        and arithmetic == "double-single"
+        and render_mode == "direct"
+    )
+    return {
+        "id": "auto-tone-visible-relief",
+        "passed": passed,
+        "maximum_channel_delta": maximum_delta,
+        "visible_pixel_count": visible_count,
+        "mean_relief_channel_delta": mean_relief_delta,
+        "mean_direction_channel_delta": mean_direction_delta,
+        "changed_visible_pixel_fraction": changed_fraction,
+        "lit_to_unlit_mean_ratio": exposure_ratio,
+        "optimized_frame_path": optimized,
+        "transfer": transfer,
+        "render_mode": render_mode,
+        "planned_render_mode": planned_render_mode,
+        "arithmetic": arithmetic,
+        "height_source": actual.details.get("surface_lighting_height_source"),
+        "slope_scale": actual.details.get("surface_lighting_slope_scale"),
+        "flat_neutral": actual.details.get("surface_lighting_flat_neutral"),
+    }
+
+
 def run(
     cases: Iterable[ValidationCase],
     settings: SurfaceLightingSettings,
@@ -204,7 +334,19 @@ def run(
     renderer = CudaRenderer()
     if not renderer.is_available():
         raise RuntimeError("CUDA is not available")
-    records = [validate_case(renderer, case, settings, repeats) for case in cases]
+    planned_cases = tuple(cases)
+    if not planned_cases:
+        raise ValueError("at least one validation case is required")
+    records = [
+        validate_case(renderer, case, settings, repeats) for case in planned_cases
+    ]
+    first_request = planned_cases[0].request
+    auto_relief = validate_auto_relief(
+        renderer,
+        first_request.width,
+        first_request.height,
+        settings,
+    )
     return {
         "environment": {
             "platform": platform.platform(),
@@ -214,7 +356,11 @@ def run(
         },
         "settings": asdict(settings),
         "cases": records,
-        "passed": all(bool(record["passed"]) for record in records),
+        "auto_relief": auto_relief,
+        "passed": (
+            all(bool(record["passed"]) for record in records)
+            and bool(auto_relief["passed"])
+        ),
     }
 
 

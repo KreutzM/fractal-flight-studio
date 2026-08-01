@@ -7,6 +7,7 @@ from fractal_flight_studio.surface_lighting import (
     SurfaceLightingSettings,
     apply_surface_lighting,
 )
+from fractal_flight_studio.tonemapping import ToneMapState
 
 
 def _rgb(shape: tuple[int, int], value: int = 160) -> np.ndarray:
@@ -67,7 +68,7 @@ def test_flat_height_field_produces_uniform_lighting() -> None:
     )
 
     assert np.unique(result.reshape(-1, 3), axis=0).shape == (1, 3)
-    assert np.array_equal(result[0, 0], np.array([120, 120, 120], dtype=np.uint8))
+    assert np.array_equal(result[0, 0], np.array([200, 200, 200], dtype=np.uint8))
 
 
 def test_horizontal_ramp_is_brighter_when_lit_from_the_downhill_side() -> None:
@@ -166,6 +167,55 @@ def test_surface_lighting_is_deterministic() -> None:
     second = apply_surface_lighting(values, inside, rgb, settings)
 
     assert np.array_equal(first, second)
+
+
+def test_tone_mapped_height_reveals_compressed_iteration_gradients() -> None:
+    values = np.tile(
+        np.linspace(0.705, 0.735, 9, dtype=np.float32),
+        (5, 1),
+    )
+    inside = np.zeros(values.shape, dtype=np.bool_)
+    rgb = _rgb(values.shape, 160)
+    tone_state = ToneMapState(
+        mode="auto",
+        scene_key=("compressed-height",),
+        low=0.70,
+        high=0.74,
+        strength=3.0,
+        gamma=1.0,
+    )
+
+    lit_from_left = apply_surface_lighting(
+        values,
+        inside,
+        rgb,
+        _enabled(azimuth_degrees=180.0, elevation_degrees=35.0),
+        tone_state=tone_state,
+    )
+    lit_from_right = apply_surface_lighting(
+        values,
+        inside,
+        rgb,
+        _enabled(azimuth_degrees=0.0, elevation_degrees=35.0),
+        tone_state=tone_state,
+    )
+
+    assert abs(float(lit_from_left.mean()) - float(lit_from_right.mean())) > 20.0
+    assert np.count_nonzero(lit_from_left != lit_from_right) > values.size
+
+
+def test_surface_lighting_rejects_invalid_tone_state() -> None:
+    values = np.linspace(0.0, 1.0, 9, dtype=np.float32).reshape(3, 3)
+    inside = np.zeros(values.shape, dtype=np.bool_)
+
+    with pytest.raises(ValueError, match="ToneMapState"):
+        apply_surface_lighting(
+            values,
+            inside,
+            _rgb(values.shape),
+            _enabled(),
+            tone_state=True,  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.parametrize(

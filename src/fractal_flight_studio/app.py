@@ -16,7 +16,12 @@ from .gpu_info import inspect_cuda
 from .models import FractalKind, Precision, RenderMode, RenderRequest
 from .render_controller import RenderController
 from .renderers import available_renderers, select_renderer
-from .surface_lighting import SurfaceLightingSettings
+from .surface_lighting import (
+    CUSTOM_SURFACE_LIGHTING_PRESET,
+    SurfaceLightingSettings,
+    surface_lighting_preset_for,
+    surface_lighting_settings_for_preset,
+)
 
 
 class FractalStudioApp:
@@ -35,6 +40,12 @@ class FractalStudioApp:
         self.cuda_status = inspect_cuda()
 
         self.camera = CameraState()
+        lighting_defaults = SurfaceLightingSettings()
+        if not hasattr(self, "_surface_lighting_ambient"):
+            self._surface_lighting_ambient = lighting_defaults.ambient
+        if not hasattr(self, "_surface_lighting_diffuse"):
+            self._surface_lighting_diffuse = lighting_defaults.diffuse
+        self._applying_surface_lighting_preset = False
 
         self._build_ui()
         self._bind_events()
@@ -130,7 +141,50 @@ class FractalStudioApp:
             strength=float(self.surface_lighting_strength_var.get()),
             azimuth_degrees=float(self.surface_lighting_azimuth_var.get()),
             elevation_degrees=float(self.surface_lighting_elevation_var.get()),
+            ambient=float(self._surface_lighting_ambient),
+            diffuse=float(self._surface_lighting_diffuse),
         )
+
+    def apply_surface_lighting_preset(self, _event=None) -> None:
+        name = self.surface_lighting_preset_var.get()
+        if name == CUSTOM_SURFACE_LIGHTING_PRESET:
+            return
+        settings = surface_lighting_settings_for_preset(name)
+        previous_flight_guard = getattr(
+            self, "_applying_flight_plan_settings", None
+        )
+        self._applying_surface_lighting_preset = True
+        if previous_flight_guard is not None:
+            self._applying_flight_plan_settings = True
+        try:
+            self._surface_lighting_ambient = settings.ambient
+            self._surface_lighting_diffuse = settings.diffuse
+            self.surface_lighting_enabled_var.set(settings.enabled)
+            self.surface_lighting_strength_var.set(settings.strength)
+            self.surface_lighting_azimuth_var.set(settings.azimuth_degrees)
+            self.surface_lighting_elevation_var.set(settings.elevation_degrees)
+        finally:
+            self._applying_surface_lighting_preset = False
+            if previous_flight_guard is not None:
+                self._applying_flight_plan_settings = previous_flight_guard
+        self._refresh_surface_lighting_preset()
+        sync = getattr(self, "_sync_primary_flight_settings", None)
+        if sync is not None:
+            sync()
+
+    def _refresh_surface_lighting_preset(self, *_args) -> None:
+        if self._applying_surface_lighting_preset:
+            return
+        try:
+            name = surface_lighting_preset_for(self._surface_lighting_settings())
+        except (AttributeError, ValueError, tk.TclError):
+            name = CUSTOM_SURFACE_LIGHTING_PRESET
+        if self.surface_lighting_preset_var.get() != name:
+            self._applying_surface_lighting_preset = True
+            try:
+                self.surface_lighting_preset_var.set(name)
+            finally:
+                self._applying_surface_lighting_preset = False
 
     def _interactive_render_scale(self) -> float:
         return (

@@ -8,7 +8,14 @@ import pytest
 from fractal_flight_studio.app import FractalStudioApp
 from fractal_flight_studio.models import RenderRequest
 from fractal_flight_studio.service import render_rgb
-from fractal_flight_studio.surface_lighting import SurfaceLightingSettings
+from fractal_flight_studio.surface_lighting import (
+    CUSTOM_SURFACE_LIGHTING_PRESET,
+    SURFACE_LIGHTING_PRESETS,
+    SurfaceLightingSettings,
+    surface_lighting_preset_for,
+    surface_lighting_preset_names,
+    surface_lighting_settings_for_preset,
+)
 
 
 class _Var:
@@ -18,9 +25,13 @@ class _Var:
     def get(self):
         return self.value
 
+    def set(self, value):
+        self.value = value
+
 
 def _app_settings(**changes):
     values = {
+        "surface_lighting_preset_var": _Var(CUSTOM_SURFACE_LIGHTING_PRESET),
         "surface_lighting_enabled_var": _Var(False),
         "surface_lighting_strength_var": _Var(1.5),
         "surface_lighting_azimuth_var": _Var(315.0),
@@ -28,7 +39,12 @@ def _app_settings(**changes):
     }
     for name, value in changes.items():
         values[name] = _Var(value)
-    return SimpleNamespace(**values)
+    return SimpleNamespace(
+        **values,
+        _surface_lighting_ambient=0.35,
+        _surface_lighting_diffuse=0.65,
+        _applying_surface_lighting_preset=False,
+    )
 
 
 def test_app_surface_lighting_defaults_are_disabled() -> None:
@@ -69,6 +85,56 @@ def test_app_surface_lighting_rejects_invalid_gui_values(field: str, value: floa
             _app_settings(**{field: value})
         )
 
+
+
+def test_surface_lighting_presets_are_complete_distinct_settings() -> None:
+    names = surface_lighting_preset_names()
+
+    assert names[0] == CUSTOM_SURFACE_LIGHTING_PRESET
+    assert names[1:] == tuple(preset.name for preset in SURFACE_LIGHTING_PRESETS)
+    assert len(set(names)) == len(names)
+    assert len({preset.settings for preset in SURFACE_LIGHTING_PRESETS}) == len(
+        SURFACE_LIGHTING_PRESETS
+    )
+    assert all(preset.settings.enabled for preset in SURFACE_LIGHTING_PRESETS)
+
+
+def test_app_applies_complete_surface_lighting_preset() -> None:
+    app = _app_settings(surface_lighting_preset_var="Dramatisch")
+    app._surface_lighting_settings = lambda: FractalStudioApp._surface_lighting_settings(app)
+    app._refresh_surface_lighting_preset = lambda *_args: (
+        FractalStudioApp._refresh_surface_lighting_preset(app)
+    )
+
+    FractalStudioApp.apply_surface_lighting_preset(app)
+
+    expected = surface_lighting_settings_for_preset("Dramatisch")
+    assert FractalStudioApp._surface_lighting_settings(app) == expected
+    assert app.surface_lighting_preset_var.get() == "Dramatisch"
+
+
+def test_manual_surface_lighting_values_are_custom() -> None:
+    settings = surface_lighting_settings_for_preset("Sanft")
+
+    assert surface_lighting_preset_for(settings) == "Sanft"
+    assert (
+        surface_lighting_preset_for(
+            SurfaceLightingSettings(
+                enabled=True,
+                strength=settings.strength + 0.1,
+                azimuth_degrees=settings.azimuth_degrees,
+                elevation_degrees=settings.elevation_degrees,
+                ambient=settings.ambient,
+                diffuse=settings.diffuse,
+            )
+        )
+        == CUSTOM_SURFACE_LIGHTING_PRESET
+    )
+
+
+def test_unknown_surface_lighting_preset_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown surface-lighting preset"):
+        surface_lighting_settings_for_preset("Unbekannt")
 
 def test_render_rgb_forwards_surface_lighting(monkeypatch) -> None:
     captured = {}
