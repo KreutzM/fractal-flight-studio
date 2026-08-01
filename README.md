@@ -174,8 +174,12 @@ Die optionale **2.5D-Beleuchtung** moduliert das bereits kolorierte Bild anhand
 der lokalen Escape-Wert-Neigung. Sie verändert weder Iterationen noch
 Inside/Outside-Klassifikation. In der linken Seitenleiste aktivieren
 **Reliefbeleuchtung aktiv**, **Stärke**, **Azimut** und **Höhe** den Effekt für
-interaktive Vorschau, Flugplan-Wiedergabe und PNG-Export. Standardmäßig bleibt
-die Beleuchtung deaktiviert und alle bisherigen Bildausgaben unverändert.
+interaktive Vorschau, Flugplan-Wiedergabe, PNG-Export, Preflight und MP4-Export.
+Die Einstellungen werden global im Schema-3-Flugplan gespeichert und beim Öffnen
+wieder in die GUI übernommen. Schema-1-Pläne übernehmen die Import-Defaults;
+Schema-2-Pläne werden kompatibel mit deaktivierter Beleuchtung geladen.
+Standardmäßig bleibt die Beleuchtung deaktiviert und alle bisherigen
+Bildausgaben unverändert.
 
 - Mausrad: hinein- und herauszoomen
 - linke Maustaste ziehen: Ansicht verschieben
@@ -187,7 +191,7 @@ die Beleuchtung deaktiviert und alle bisherigen Bildausgaben unverändert.
 - „Katalogziel mit Übergang …“: ein weiteres Ziel automatisch direkt, über eine Brückenansicht, über die Gesamtansicht oder als Schnitt anhängen; Palette wahlweise überblenden, halten oder umschalten
 - „Video exportieren …“: Auflösung und Framerate planen, FFmpeg prüfen, einen Low-Resolution-Preflight ausführen und anschließend direkt als MP4 rendern
 
-Die Echtzeitwiedergabe verwendet dieselbe zeitabhängige Kamera-, Qualitäts- und Palettenauswertung wie Preflight und MP4-Export. Der Playhead folgt einer monotonen Echtzeituhr. Ist das Rendering langsamer als die Timeline, werden veraltete Zwischenpositionen nicht nachgeholt; nach dem fertigen Frame wird direkt die aktuellste Position gerendert.
+Die Echtzeitwiedergabe verwendet dieselbe zeitabhängige Kamera-, Qualitäts- und Palettenauswertung sowie dieselbe globale Reliefbeleuchtung wie Preflight und MP4-Export. Der Playhead folgt einer monotonen Echtzeituhr. Ist das Rendering langsamer als die Timeline, werden veraltete Zwischenpositionen nicht nachgeholt; nach dem fertigen Frame wird direkt die aktuellste Position gerendert.
 
 Für normale Vorschau und Flugplan-Wiedergabe kann die Render-Skalierung getrennt auf 50 %, 75 % oder 100 % gesetzt werden. Auf CUDA-Systemen ist 100 % voreingestellt; auf CPU-Systemen 75 %. Die Statuszeile trennt Rechnen/Transfer von der Tk-Anzeige.
 

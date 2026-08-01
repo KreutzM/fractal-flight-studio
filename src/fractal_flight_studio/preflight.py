@@ -14,9 +14,11 @@ from .flight_plan import (
     evaluate_flight_frame,
     flight_path_for,
     flight_plan_fingerprint,
+    surface_lighting_for,
 )
 from .models import RenderRequest
 from .palettes import PaletteInput, palette_cache_key
+from .surface_lighting import SurfaceLightingSettings
 
 ScalarDetail: TypeAlias = bool | float | int | str | None
 PreflightProgressCallback: TypeAlias = Callable[["PreflightSample", int], None]
@@ -168,6 +170,7 @@ def run_path_preflight(
     phase: float = 0.0,
     tone_mapping: str = "auto",
     tone_smoothing: float = 0.16,
+    surface_lighting: SurfaceLightingSettings | None = None,
     progress: PreflightProgressCallback | None = None,
     cancellation_requested: CancellationCheck | None = None,
 ) -> PreflightReport:
@@ -178,6 +181,7 @@ def run_path_preflight(
     tone_state = None
     total_elapsed = 0.0
     stopped_early = False
+    lighting = surface_lighting_for(source, surface_lighting)
     scene_key = (
         "path-preflight",
         flight_plan_fingerprint(source),
@@ -187,6 +191,7 @@ def run_path_preflight(
         cycles,
         phase,
         tone_mapping,
+        lighting,
     )
 
     for index, time_text in enumerate(plan.sample_times_text):
@@ -225,6 +230,7 @@ def run_path_preflight(
                 tone_state=tone_state,
                 tone_scene_key=scene_key,
                 tone_smoothing=tone_smoothing,
+                surface_lighting=lighting,
             )
             backend = frame.backend
             elapsed = frame.elapsed_seconds

@@ -21,6 +21,7 @@ from .flight_plan import (
 )
 from .flight_plan_io import (
     FLIGHT_PLAN_EXTENSION,
+    FLIGHT_PLAN_SCHEMA_VERSION,
     load_flight_plan,
     save_flight_plan,
     suggested_flight_plan_name,
@@ -46,6 +47,7 @@ from .target_browser import DeepZoomTargetBrowser
 from .timeline_editor import CameraPathEditorWindow
 from .transition_dialog import TargetTransitionDialog
 from .renderers import available_renderers, select_renderer
+from .surface_lighting import SurfaceLightingSettings
 
 
 class FractalStudioApp(BaseFractalStudioApp):
@@ -62,6 +64,9 @@ class FractalStudioApp(BaseFractalStudioApp):
         self.catalog_transition_dialog: TargetTransitionDialog | None = None
         self.free_target_dialog: FreeTargetTransitionDialog | None = None
         self._applying_flight_plan_settings = False
+        defaults = SurfaceLightingSettings()
+        self._surface_lighting_ambient = defaults.ambient
+        self._surface_lighting_diffuse = defaults.diffuse
         self._last_session_document_state: tuple[object, ...] | None = None
         self._path_preview_frame: EvaluatedFlightFrame | None = None
         self.deep_zoom_targets_by_name = {target.name: target for target in self.deep_zoom_targets}
@@ -71,6 +76,7 @@ class FractalStudioApp(BaseFractalStudioApp):
             digits=self._work_digits(),
             scene=self._current_flight_scene(),
             render_profile=self._current_render_profile(),
+            surface_lighting=self._surface_lighting_settings(),
         )
         self.flight_plan_session.add_listener(
             self._on_flight_plan_session_changed,
@@ -85,6 +91,10 @@ class FractalStudioApp(BaseFractalStudioApp):
             self.julia_real_var,
             self.julia_imag_var,
             self.exponent_var,
+            self.surface_lighting_enabled_var,
+            self.surface_lighting_strength_var,
+            self.surface_lighting_azimuth_var,
+            self.surface_lighting_elevation_var,
         ):
             variable.trace_add("write", self._sync_primary_flight_settings)
         self._build_deep_zoom_target_bar()
@@ -135,10 +145,21 @@ class FractalStudioApp(BaseFractalStudioApp):
             cycles_text=format(float(self.cycles_var.get()), ".17g"),
         )
 
+    def _surface_lighting_settings(self) -> SurfaceLightingSettings:
+        return SurfaceLightingSettings(
+            enabled=bool(self.surface_lighting_enabled_var.get()),
+            strength=float(self.surface_lighting_strength_var.get()),
+            azimuth_degrees=float(self.surface_lighting_azimuth_var.get()),
+            elevation_degrees=float(self.surface_lighting_elevation_var.get()),
+            ambient=float(self._surface_lighting_ambient),
+            diffuse=float(self._surface_lighting_diffuse),
+        )
+
     def _migration_defaults(self) -> FlightPlanDefaults:
         return FlightPlanDefaults(
             self._current_flight_scene(),
             self._current_render_profile(),
+            self._surface_lighting_settings(),
         )
 
     def _sync_primary_flight_settings(self, *_args) -> None:
@@ -149,9 +170,20 @@ class FractalStudioApp(BaseFractalStudioApp):
             self.flight_plan_session.sync_primary_settings(
                 self._current_flight_scene(),
                 self._current_render_profile(),
+                self._surface_lighting_settings(),
             )
         except Exception as exc:
             self.status_var.set(f"Flugplan-Einstellung ungültig: {exc}")
+
+    def _apply_surface_lighting_settings(
+        self, settings: SurfaceLightingSettings
+    ) -> None:
+        self._surface_lighting_ambient = settings.ambient
+        self._surface_lighting_diffuse = settings.diffuse
+        self.surface_lighting_enabled_var.set(settings.enabled)
+        self.surface_lighting_strength_var.set(settings.strength)
+        self.surface_lighting_azimuth_var.set(settings.azimuth_degrees)
+        self.surface_lighting_elevation_var.set(settings.elevation_degrees)
 
     def _apply_document_primary_settings(self, document) -> None:
         profile = document.render_track.first_profile
@@ -166,6 +198,7 @@ class FractalStudioApp(BaseFractalStudioApp):
             self.reference_bits_var.set(profile.reference_bits)
             self.palette_var.set(profile.palette)
             self.cycles_var.set(profile.cycles)
+            self._apply_surface_lighting_settings(document.surface_lighting)
         finally:
             self._applying_flight_plan_settings = False
 
@@ -174,6 +207,7 @@ class FractalStudioApp(BaseFractalStudioApp):
             session.camera_draft,
             session.scene,
             session.render_track,
+            session.surface_lighting,
             session.name,
             session.file_path,
             session.dirty,
@@ -181,6 +215,16 @@ class FractalStudioApp(BaseFractalStudioApp):
         if state == self._last_session_document_state:
             return
         self._last_session_document_state = state
+        try:
+            current_lighting = self._surface_lighting_settings()
+        except ValueError:
+            current_lighting = None
+        if current_lighting != session.surface_lighting:
+            self._applying_flight_plan_settings = True
+            try:
+                self._apply_surface_lighting_settings(session.surface_lighting)
+            finally:
+                self._applying_flight_plan_settings = False
         self._path_preview_frame = None
         self._reload_playback_document()
         path = session.camera_path
@@ -635,7 +679,12 @@ class FractalStudioApp(BaseFractalStudioApp):
             return False
         self._apply_document_primary_settings(document)
         self.flight_plan_session.set_document(document, file_path=path, dirty=False)
-        migrated = "; Schema 1 wird beim nächsten Speichern auf Schema 2 aktualisiert" if document.source_schema_version == 1 else ""
+        migrated = (
+            f"; Schema {document.source_schema_version} wird beim nächsten Speichern "
+            f"auf Schema {FLIGHT_PLAN_SCHEMA_VERSION} aktualisiert"
+            if document.source_schema_version < FLIGHT_PLAN_SCHEMA_VERSION
+            else ""
+        )
         self.position_var.set(
             f"Flugplan {document.name} geladen: "
             f"{len(document.path.keyframes)} Keyframes, Dauer {document.path.duration_text} s; "

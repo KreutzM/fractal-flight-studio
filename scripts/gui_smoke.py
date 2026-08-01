@@ -39,6 +39,8 @@ def main() -> int:
     assert lighting.strength == 2.25
     assert lighting.azimuth_degrees == 210.0
     assert lighting.elevation_degrees == 52.0
+    root.update_idletasks()
+    assert app.flight_plan_session.surface_lighting == lighting
 
     app.set_catalog_flight_target()
     catalog_dialog = app.catalog_transition_dialog
@@ -104,17 +106,23 @@ def main() -> int:
         saved = load_flight_plan(plan_path)
         assert saved.source_schema_version == FLIGHT_PLAN_SCHEMA_VERSION
         assert saved.render_track.first_profile.palette == app.palette_var.get()
+        assert saved.surface_lighting == lighting
         assert not app.camera_path_dirty
         timeline._draft = timeline.draft.remove_keyframe(len(timeline.draft.keyframes) - 1)
         timeline._refresh_tree()
         timeline._publish_path_state()
         assert app.camera_path_dirty
+        app.surface_lighting_enabled_var.set(False)
+        app.surface_lighting_strength_var.set(0.5)
+        root.update_idletasks()
         assert app._load_flight_plan_path(plan_path)
         timeline = app.timeline_editor
         assert timeline is not None
         assert len(timeline.draft.keyframes) == initial_keyframe_count
         assert app.camera_path_file == plan_path
         assert app.camera_path_name == "GUI smoke"
+        assert app._surface_lighting_settings() == lighting
+        assert app.flight_plan_session.surface_lighting == lighting
         assert not app.camera_path_dirty
     timeline.destroy()
     root.update_idletasks()
@@ -162,6 +170,7 @@ def main() -> int:
     assert "Tone Mapping: Zeitlich stabilisiert" in export_dialog.plan_summary_var.get()
     export_source, _config, export_request, *_rest = export_dialog._context()
     assert isinstance(export_source, FlightPlanDocument)
+    assert export_source.surface_lighting == lighting
     assert len(export_source.render_track.cues) == 2
     assert export_request.max_iterations == int(app.iterations_var.get())
     export_dialog.destroy()

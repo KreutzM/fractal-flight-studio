@@ -11,10 +11,11 @@ from .ffmpeg_mp4 import (
     ProgressCallback,
     encode_mp4_frames,
 )
-from .flight_plan import FlightSource, flight_plan_fingerprint
+from .flight_plan import FlightSource, flight_plan_fingerprint, surface_lighting_for
 from .models import RenderRequest
 from .palettes import PaletteInput
 from .offline_render import OfflineFramePlan, render_offline_frames
+from .surface_lighting import SurfaceLightingSettings
 from .temporal_tonemapping import (
     TemporalToneSettings,
     ToneAnalysisCallback,
@@ -65,10 +66,12 @@ def export_path_to_mp4(
     tone_analysis_progress: ToneAnalysisCallback | None = None,
     progress: ProgressCallback | None = None,
     cancellation_requested: CancellationCheck | None = None,
+    surface_lighting: SurfaceLightingSettings | None = None,
 ) -> Mp4ExportResult:
     """Render a complete cadence-only path and stream it directly into FFmpeg."""
 
     mp4_plan = build_mp4_export_plan(offline_plan)
+    lighting = surface_lighting_for(source, surface_lighting)
     tone_states = None
     tone_state_locked = False
     tone_scene_key = None
@@ -86,6 +89,7 @@ def export_path_to_mp4(
             tone_mapping=tone_mapping,
             progress=tone_analysis_progress,
             cancellation_requested=cancellation_requested,
+            surface_lighting=lighting,
         )
         tone_state_locked = any(state is not None for state in tone_states)
         if tone_state_locked:
@@ -98,6 +102,7 @@ def export_path_to_mp4(
                     phase,
                 ),
                 flight_plan_fingerprint(source),
+                lighting,
             )
 
     frames = render_offline_frames(
@@ -113,6 +118,7 @@ def export_path_to_mp4(
         tone_states=tone_states,
         tone_scene_key=tone_scene_key,
         tone_state_locked=tone_state_locked,
+        surface_lighting=lighting,
     )
     return encode_mp4_frames(
         frames,
