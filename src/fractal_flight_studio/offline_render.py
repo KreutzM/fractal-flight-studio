@@ -14,9 +14,11 @@ from .flight_plan import (
     FlightSource,
     evaluate_flight_frame,
     flight_path_for,
+    surface_lighting_for,
 )
 from .models import RenderRequest
 from .palettes import PaletteInput, palette_cache_key
+from .surface_lighting import SurfaceLightingSettings
 from .tonemapping import ToneMapState
 
 ScalarDetail: TypeAlias = bool | float | int | str | None
@@ -187,6 +189,7 @@ def render_offline_frame(
     tone_state: ToneMapState | None = None,
     tone_scene_key: tuple[object, ...] | None = None,
     tone_state_locked: bool = False,
+    surface_lighting: SurfaceLightingSettings | None = None,
 ) -> OfflineFrame:
     effective_palette = job.palette if palette is None else palette
     effective_cycles = job.cycles if cycles is None else cycles
@@ -200,6 +203,7 @@ def render_offline_frame(
         effective_cycles,
         phase,
         tone_mapping,
+        surface_lighting,
     )
     try:
         frame = renderer.render_frame(
@@ -212,6 +216,7 @@ def render_offline_frame(
             tone_scene_key=scene_key,
             tone_smoothing=1.0,
             tone_state_locked=tone_state_locked,
+            surface_lighting=surface_lighting,
         )
         rgb = np.asarray(frame.rgb)
         expected_shape = (job.request.height, job.request.width, 3)
@@ -250,8 +255,10 @@ def render_offline_frames(
     tone_states: Sequence[ToneMapState | None] | None = None,
     tone_scene_key: tuple[object, ...] | None = None,
     tone_state_locked: bool = False,
+    surface_lighting: SurfaceLightingSettings | None = None,
 ) -> Iterator[OfflineFrame]:
     stop = plan.frame_count if stop_index is None else stop_index
+    lighting = surface_lighting_for(source, surface_lighting)
     if tone_states is not None and len(tone_states) < stop:
         raise ValueError("tone-state plan is shorter than the requested frame range")
     for job in iter_offline_frame_jobs(
@@ -272,6 +279,7 @@ def render_offline_frames(
             tone_state=tone_state,
             tone_scene_key=tone_scene_key,
             tone_state_locked=tone_state_locked,
+            surface_lighting=lighting,
         )
 
 
