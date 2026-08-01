@@ -49,6 +49,100 @@ class SurfaceLightingSettings:
             raise ValueError("surface lighting diffuse must be in the interval [0, 1]")
 
 
+@dataclass(frozen=True, slots=True)
+class SurfaceLightingPreset:
+    """Named, deterministic collection of complete lighting settings."""
+
+    name: str
+    settings: SurfaceLightingSettings
+
+
+CUSTOM_SURFACE_LIGHTING_PRESET = "Benutzerdefiniert"
+SURFACE_LIGHTING_PRESETS: tuple[SurfaceLightingPreset, ...] = (
+    SurfaceLightingPreset(
+        "Sanft",
+        SurfaceLightingSettings(
+            enabled=True,
+            strength=1.2,
+            azimuth_degrees=315.0,
+            elevation_degrees=50.0,
+            ambient=0.45,
+            diffuse=0.55,
+        ),
+    ),
+    SurfaceLightingPreset(
+        "Dramatisch",
+        SurfaceLightingSettings(
+            enabled=True,
+            strength=2.8,
+            azimuth_degrees=315.0,
+            elevation_degrees=28.0,
+            ambient=0.20,
+            diffuse=0.80,
+        ),
+    ),
+    SurfaceLightingPreset(
+        "Seitenlicht",
+        SurfaceLightingSettings(
+            enabled=True,
+            strength=2.2,
+            azimuth_degrees=0.0,
+            elevation_degrees=25.0,
+            ambient=0.25,
+            diffuse=0.75,
+        ),
+    ),
+    SurfaceLightingPreset(
+        "Gegenlicht",
+        SurfaceLightingSettings(
+            enabled=True,
+            strength=2.2,
+            azimuth_degrees=135.0,
+            elevation_degrees=35.0,
+            ambient=0.25,
+            diffuse=0.75,
+        ),
+    ),
+    SurfaceLightingPreset(
+        "Toplicht",
+        SurfaceLightingSettings(
+            enabled=True,
+            strength=1.0,
+            azimuth_degrees=270.0,
+            elevation_degrees=70.0,
+            ambient=0.50,
+            diffuse=0.50,
+        ),
+    ),
+)
+_SURFACE_LIGHTING_PRESETS_BY_NAME = {
+    preset.name: preset for preset in SURFACE_LIGHTING_PRESETS
+}
+
+
+def surface_lighting_preset_names(*, include_custom: bool = True) -> tuple[str, ...]:
+    names = tuple(preset.name for preset in SURFACE_LIGHTING_PRESETS)
+    if include_custom:
+        return (CUSTOM_SURFACE_LIGHTING_PRESET, *names)
+    return names
+
+
+def surface_lighting_settings_for_preset(name: str) -> SurfaceLightingSettings:
+    try:
+        return _SURFACE_LIGHTING_PRESETS_BY_NAME[name].settings
+    except KeyError as exc:
+        raise ValueError(f"unknown surface-lighting preset {name!r}") from exc
+
+
+def surface_lighting_preset_for(settings: SurfaceLightingSettings) -> str:
+    if not isinstance(settings, SurfaceLightingSettings):
+        raise ValueError("surface-lighting preset matching requires SurfaceLightingSettings")
+    for preset in SURFACE_LIGHTING_PRESETS:
+        if settings == preset.settings:
+            return preset.name
+    return CUSTOM_SURFACE_LIGHTING_PRESET
+
+
 def apply_surface_lighting(
     values: np.ndarray,
     inside: np.ndarray,
