@@ -8,7 +8,7 @@ parallelisierter CPU-Renderer zur Verfügung.
 ## Funktionsumfang
 
 - Mandelbrot-, Julia-, Burning-Ship-, Multibrot- und Newton-Fraktale
-- geglättete Escape-Time-Farbgebung, fünf Paletten und automatisches Tone Mapping
+- geglättete Escape-Time-Farbgebung, fünf Paletten, automatisches Tone Mapping und optionale 2.5D-Reliefbeleuchtung
 - Maus-Zoom am Cursor, Verschieben durch Ziehen und Rechtsklick-Vorschläge für exakte Flugplan-Ziele
 - Echtzeitwiedergabe des gemeinsamen Flugplans mit separat einstellbarer Render-Skalierung
 - echte getrennte `float32`- und `float64`-Kernels sowie interne CUDA-Double-Single-Beschleunigung für geeignete Mandelbrot-`auto`-Frames
@@ -169,6 +169,13 @@ finale Render verwendet die geplanten Parameter unverändert; dadurch bleiben
 Helligkeit, Kontrast und Farbverteilung zwischen benachbarten Frames ruhiger.
 
 ## Bedienung
+
+Die optionale **2.5D-Beleuchtung** moduliert das bereits kolorierte Bild anhand
+der lokalen Escape-Wert-Neigung. Sie verändert weder Iterationen noch
+Inside/Outside-Klassifikation. In der linken Seitenleiste aktivieren
+**Reliefbeleuchtung aktiv**, **Stärke**, **Azimut** und **Höhe** den Effekt für
+interaktive Vorschau, Flugplan-Wiedergabe und PNG-Export. Standardmäßig bleibt
+die Beleuchtung deaktiviert und alle bisherigen Bildausgaben unverändert.
 
 - Mausrad: hinein- und herauszoomen
 - linke Maustaste ziehen: Ansicht verschieben

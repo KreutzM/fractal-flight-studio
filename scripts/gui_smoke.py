@@ -29,6 +29,16 @@ def main() -> int:
     assert app.flight_plan_session.scene.fractal.value == "mandelbrot"
     assert len(app.deep_zoom_targets) == 10
     assert app.deep_zoom_target_var.get() == app.deep_zoom_targets[0].name
+    assert app.surface_lighting_enabled_var.get() is False
+    app.surface_lighting_enabled_var.set(True)
+    app.surface_lighting_strength_var.set(2.25)
+    app.surface_lighting_azimuth_var.set(210.0)
+    app.surface_lighting_elevation_var.set(52.0)
+    lighting = app._surface_lighting_settings()
+    assert lighting.enabled is True
+    assert lighting.strength == 2.25
+    assert lighting.azimuth_degrees == 210.0
+    assert lighting.elevation_degrees == 52.0
 
     app.set_catalog_flight_target()
     catalog_dialog = app.catalog_transition_dialog

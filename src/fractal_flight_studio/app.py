@@ -16,6 +16,7 @@ from .gpu_info import inspect_cuda
 from .models import FractalKind, Precision, RenderMode, RenderRequest
 from .render_controller import RenderController
 from .renderers import available_renderers, select_renderer
+from .surface_lighting import SurfaceLightingSettings
 
 
 class FractalStudioApp:
@@ -123,6 +124,14 @@ class FractalStudioApp:
     def _render_cycles(self) -> float:
         return float(self.cycles_var.get())
 
+    def _surface_lighting_settings(self) -> SurfaceLightingSettings:
+        return SurfaceLightingSettings(
+            enabled=bool(self.surface_lighting_enabled_var.get()),
+            strength=float(self.surface_lighting_strength_var.get()),
+            azimuth_degrees=float(self.surface_lighting_azimuth_var.get()),
+            elevation_degrees=float(self.surface_lighting_elevation_var.get()),
+        )
+
     def _interactive_render_scale(self) -> float:
         return (
             self.flight_scale_var.get()
@@ -140,12 +149,19 @@ class FractalStudioApp:
             renderer = select_renderer(backend_name)
             palette = self._render_palette()
             cycles = self._render_cycles()
+            surface_lighting = self._surface_lighting_settings()
         except Exception as exc:
             self.status_var.set(str(exc))
             return
 
         submission = self.render_controller.submit(
-            lambda: renderer.render_frame(request, palette, cycles, 0.0)
+            lambda: renderer.render_frame(
+                request,
+                palette,
+                cycles,
+                0.0,
+                surface_lighting=surface_lighting,
+            )
         )
         if submission is None:
             return
@@ -193,6 +209,12 @@ class FractalStudioApp:
             reference_upload = float(result.details.get("reference_upload_seconds", 0.0))
             allocation_line = f"; Puffer {allocation * 1000:.1f} ms" if allocation > 0 else ""
             upload_line = f"; Ref {reference_upload * 1000:.1f} ms" if reference_upload > 0 else ""
+            lighting_line = ""
+            if result.details.get("surface_lighting_enabled"):
+                lighting_seconds = float(
+                    result.details.get("surface_lighting_seconds", 0.0)
+                )
+                lighting_line = f"; Licht {lighting_seconds * 1000:.1f} ms"
             render_mode = result.details.get("render_mode", "direct")
             requested_precision = request.precision.value
             if render_mode == "perturbation":
@@ -227,7 +249,7 @@ class FractalStudioApp:
             self.status_var.set(
                 f"{result.backend}/{optimized}: Rechnen+Transfer {result.elapsed_seconds * 1000:.1f} ms; "
                 f"Anzeige {display_seconds * 1000:.1f} ms; ca. {fps:.1f} FPS"
-                f"{allocation_line}{upload_line}{deep_line}"
+                f"{allocation_line}{upload_line}{lighting_line}{deep_line}"
                 f"{device_line}{fallback_line}\n"
                 f"Rendergröße: {rgb.shape[1]}×{rgb.shape[0]}; Ansichtsbreite: {self.camera.view_width_text}"
             )
@@ -336,7 +358,12 @@ class FractalStudioApp:
         try:
             renderer = select_renderer(self.backend_var.get())
             request = self._request(1.0)
-            result = renderer.render_frame(request, self.palette_var.get(), float(self.cycles_var.get()))
+            result = renderer.render_frame(
+                request,
+                self.palette_var.get(),
+                float(self.cycles_var.get()),
+                surface_lighting=self._surface_lighting_settings(),
+            )
             Image.fromarray(result.rgb, mode="RGB").save(path)
             self.status_var.set(f"Exportiert: {path}")
         except Exception as exc:

@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-Keine unreleased Änderungen.
+### 2.5D surface lighting
+
+- Added compact GUI controls for enabling relief lighting and adjusting strength,
+  azimuth and elevation.
+- Applied the current lighting settings to interactive preview, flight-plan
+  playback and PNG export while keeping the default disabled output unchanged.
+- Exposed lighting time in the GUI status line and extended GUI smoke coverage.
+
 
 ## 0.10.0 — 2026-07-31
 

@@ -27,6 +27,10 @@ def build_ui(app) -> None:
     app.palette_var = tk.StringVar(value="inferno")
     app.iterations_var = tk.IntVar(value=400)
     app.cycles_var = tk.DoubleVar(value=1.0)
+    app.surface_lighting_enabled_var = tk.BooleanVar(value=False)
+    app.surface_lighting_strength_var = tk.DoubleVar(value=1.5)
+    app.surface_lighting_azimuth_var = tk.DoubleVar(value=315.0)
+    app.surface_lighting_elevation_var = tk.DoubleVar(value=45.0)
     app.julia_real_var = tk.DoubleVar(value=-0.8)
     app.julia_imag_var = tk.DoubleVar(value=0.156)
     app.exponent_var = tk.IntVar(value=3)
@@ -123,6 +127,58 @@ def build_ui(app) -> None:
     )
     row += 1
 
+    lighting = ttk.LabelFrame(controls, text="2.5D-Beleuchtung", padding=6)
+    lighting.grid(row=row, column=0, sticky="ew", pady=6)
+    ttk.Checkbutton(
+        lighting,
+        text="Reliefbeleuchtung aktiv",
+        variable=app.surface_lighting_enabled_var,
+    ).grid(row=0, column=0, columnspan=3, sticky="w")
+    ttk.Label(lighting, text="Stärke").grid(row=1, column=0, sticky="w")
+    strength = ttk.Spinbox(
+        lighting,
+        from_=0.0,
+        to=8.0,
+        increment=0.1,
+        textvariable=app.surface_lighting_strength_var,
+        width=7,
+    )
+    strength.grid(row=1, column=1, sticky="ew", padx=(6, 0))
+    ttk.Label(lighting, text="Azimut").grid(row=2, column=0, sticky="w")
+    azimuth = ttk.Spinbox(
+        lighting,
+        from_=0.0,
+        to=360.0,
+        increment=5.0,
+        textvariable=app.surface_lighting_azimuth_var,
+        width=7,
+    )
+    azimuth.grid(row=2, column=1, sticky="ew", padx=(6, 0))
+    ttk.Label(lighting, text="Höhe").grid(row=3, column=0, sticky="w")
+    elevation = ttk.Spinbox(
+        lighting,
+        from_=1.0,
+        to=90.0,
+        increment=1.0,
+        textvariable=app.surface_lighting_elevation_var,
+        width=7,
+    )
+    elevation.grid(row=3, column=1, sticky="ew", padx=(6, 0))
+    ttk.Label(lighting, text="°", foreground="#555").grid(row=2, column=2, sticky="w")
+    ttk.Label(lighting, text="°", foreground="#555").grid(row=3, column=2, sticky="w")
+    lighting.columnconfigure(1, weight=1)
+
+    lighting_controls = (strength, azimuth, elevation)
+
+    def update_lighting_controls(*_args) -> None:
+        state = "normal" if app.surface_lighting_enabled_var.get() else "disabled"
+        for control in lighting_controls:
+            control.configure(state=state)
+
+    app.surface_lighting_enabled_var.trace_add("write", update_lighting_controls)
+    update_lighting_controls()
+    row += 1
+
     julia = ttk.LabelFrame(controls, text="Julia / Multibrot", padding=6)
     julia.grid(row=row, column=0, sticky="ew", pady=6)
     ttk.Label(julia, text="c real").grid(row=0, column=0, sticky="w")
@@ -183,6 +239,10 @@ def build_ui(app) -> None:
         app.palette_var,
         app.iterations_var,
         app.cycles_var,
+        app.surface_lighting_enabled_var,
+        app.surface_lighting_strength_var,
+        app.surface_lighting_azimuth_var,
+        app.surface_lighting_elevation_var,
         app.julia_real_var,
         app.julia_imag_var,
         app.exponent_var,
