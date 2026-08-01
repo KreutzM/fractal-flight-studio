@@ -24,6 +24,7 @@ from .offline_render import (
     OfflineRenderSettings,
     build_offline_frame_plan,
 )
+from .surface_lighting import SurfaceLightingSettings
 from .temporal_tonemapping import TemporalToneSettings, ToneStability
 from .preflight import (
     PreflightReport,
@@ -265,6 +266,7 @@ class FlightExportController:
         palette: PaletteInput,
         cycles: float,
         tone_mapping: str = "auto",
+        surface_lighting: SurfaceLightingSettings | None = None,
     ) -> Future[PreflightReport]:
         total = len(build_preflight_plan(source, settings).sample_times_text)
 
@@ -287,6 +289,7 @@ class FlightExportController:
                 tone_mapping=tone_mapping,
                 progress=update,
                 cancellation_requested=self._cancel.is_set,
+                surface_lighting=surface_lighting,
             )
 
         return self._submit(
@@ -311,6 +314,7 @@ class FlightExportController:
         temporal_tone: TemporalToneSettings = TemporalToneSettings(
             mode=ToneStability.PER_FRAME
         ),
+        surface_lighting: SurfaceLightingSettings | None = None,
     ) -> Future[Mp4ExportResult]:
         frame_total = build_mp4_export_plan(offline_plan).frame_count
         analysis_enabled = (
@@ -350,6 +354,7 @@ class FlightExportController:
                 tone_analysis_progress=update_analysis,
                 progress=update_encode,
                 cancellation_requested=self._cancel.is_set,
+                surface_lighting=surface_lighting,
             )
 
         message = (
