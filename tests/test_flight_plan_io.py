@@ -34,6 +34,7 @@ from fractal_flight_studio.flight_plan_io import (
     suggested_flight_plan_name,
 )
 from fractal_flight_studio.models import FractalKind
+from fractal_flight_studio.surface_lighting import SurfaceLightingSettings
 
 
 def _document() -> FlightPlanDocument:
@@ -77,6 +78,14 @@ def _document() -> FlightPlanDocument:
             ),
             digits=180,
         ),
+        surface_lighting=SurfaceLightingSettings(
+            enabled=True,
+            strength=2.25,
+            azimuth_degrees=210.0,
+            elevation_degrees=52.0,
+            ambient=0.3,
+            diffuse=0.7,
+        ),
     )
 
 
@@ -117,10 +126,18 @@ def test_serialization_is_deterministic_utf8_and_uses_string_numbers() -> None:
     assert first.endswith("\n") and not first.endswith("\n\n")
     assert "Seahorse Δ" in first
     assert value["format"] == FLIGHT_PLAN_FORMAT
-    assert value["schema_version"] == 2
+    assert value["schema_version"] == FLIGHT_PLAN_SCHEMA_VERSION
     assert value["camera_keyframes"][1]["center_x"].endswith("4774")
     assert isinstance(value["camera_keyframes"][1]["view_width"], str)
     assert isinstance(value["scene"]["julia_c_real"], str)
+    assert value["surface_lighting"] == {
+        "enabled": True,
+        "strength": 2.25,
+        "azimuth_degrees": 210.0,
+        "elevation_degrees": 52.0,
+        "ambient": 0.3,
+        "diffuse": 0.7,
+    }
     assert isinstance(value["render_cues"][1]["cycles"], str)
 
 
@@ -165,6 +182,18 @@ def test_serialization_is_deterministic_utf8_and_uses_string_numbers() -> None:
             lambda value: value["render_cues"][1].update(palette_transition="wipe"),
             "'wipe' is not a valid PaletteTransition",
         ),
+        (
+            lambda value: value["surface_lighting"].update(enabled=1),
+            "enabled must be a boolean",
+        ),
+        (
+            lambda value: value["surface_lighting"].update(elevation_degrees=0),
+            "elevation_degrees must be in the interval",
+        ),
+        (
+            lambda value: value["surface_lighting"].pop("ambient"),
+            "missing 'ambient'",
+        ),
     ],
 )
 def test_schema_validation_rejects_invalid_documents(mutation, message: str) -> None:
@@ -175,10 +204,12 @@ def test_schema_validation_rejects_invalid_documents(mutation, message: str) -> 
         deserialize_flight_plan(json.dumps(value))
 
 
-def test_schema_one_migrates_with_caller_defaults_and_resaves_as_schema_two() -> None:
+def test_schema_one_migrates_with_caller_defaults_and_resaves_as_schema_three() -> None:
+    lighting = SurfaceLightingSettings(enabled=True, strength=1.8)
     defaults = FlightPlanDefaults(
         FlightScene(FractalKind.MULTIBROT, 4, "-0.7", "0.2"),
         RenderProfile(2200, 640, "ember", "1.75"),
+        lighting,
     )
 
     migrated = deserialize_flight_plan(
@@ -190,12 +221,27 @@ def test_schema_one_migrates_with_caller_defaults_and_resaves_as_schema_two() ->
     assert migrated.source_schema_version == 1
     assert migrated.scene == defaults.scene
     assert migrated.render_track.first_profile == defaults.render_profile
+    assert migrated.surface_lighting == lighting
     assert migrated.render_track.cues[0].time_seconds_text == "0"
     current = json.loads(serialize_flight_plan(migrated))
-    assert current["schema_version"] == 2
+    assert current["schema_version"] == FLIGHT_PLAN_SCHEMA_VERSION
     assert current["format"] == FLIGHT_PLAN_FORMAT
     assert "camera_keyframes" in current and "render_cues" in current
     assert "keyframes" not in current
+
+
+def test_schema_two_migrates_with_disabled_lighting_and_resaves_as_schema_three() -> None:
+    value = json.loads(serialize_flight_plan(_document()))
+    value["schema_version"] = 2
+    value.pop("surface_lighting")
+
+    migrated = deserialize_flight_plan(json.dumps(value), source="schema2.json")
+
+    assert migrated.source_schema_version == 2
+    assert migrated.surface_lighting == SurfaceLightingSettings()
+    current = json.loads(serialize_flight_plan(migrated))
+    assert current["schema_version"] == FLIGHT_PLAN_SCHEMA_VERSION
+    assert current["surface_lighting"]["enabled"] is False
 
 
 def test_legacy_format_is_required_for_schema_one() -> None:
