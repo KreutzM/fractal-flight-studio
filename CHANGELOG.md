@@ -14,6 +14,11 @@
 - Synchronized loaded plans back into the GUI and reused one immutable lighting
   value for preflight, temporal tone analysis and final MP4 rendering.
 - Exposed lighting time in the GUI status line and extended GUI smoke coverage.
+- Corrected the relief model to derive normals from the tone-mapped height field,
+  preserve flat-surface exposure and apply a calibrated screen-space slope scale;
+  this fixes the previous mostly uniform color darkening at high iteration counts.
+- Extended CPU/CUDA parity and physical RTX validation with a representative
+  auto-tone Seahorse view that must show measurable directional relief.
 
 
 ## 0.10.0 — 2026-07-31
