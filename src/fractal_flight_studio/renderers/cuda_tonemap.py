@@ -9,7 +9,10 @@ from numba import cuda, float32
 
 from ..models import FractalKind, RenderRequest
 from ..palettes import PaletteInput
-from ..surface_lighting import SurfaceLightingSettings
+from ..surface_lighting import (
+    SURFACE_LIGHTING_SLOPE_SCALE,
+    SurfaceLightingSettings,
+)
 from ..tonemapping import resolve_locked_tone_state, resolve_tone_state, sample_grid
 from .base import FrameResult
 from .cuda import CudaRenderer as _BaseCudaRenderer
@@ -40,6 +43,31 @@ def _sample_values_kernel(values, inside, sample_values, sample_valid, grid_x, g
     else:
         sample_values[index] = value
         sample_valid[index] = True
+
+
+@cuda.jit(device=True, inline=True)
+def _tone_mapped_value(value, mode_code, low, high, strength, gamma):
+    window = high - low
+    if window <= float32(1e-20):
+        mapped = value
+    else:
+        mapped = (value - low) / window
+    if mapped < float32(0.0):
+        mapped = float32(0.0)
+    elif mapped > float32(1.0):
+        mapped = float32(1.0)
+
+    if mode_code != 0:
+        denominator = math.log(strength + math.sqrt(strength * strength + float32(1.0)))
+        numerator_value = strength * mapped
+        numerator = math.log(
+            numerator_value + math.sqrt(numerator_value * numerator_value + float32(1.0))
+        )
+        if denominator > float32(0.0):
+            mapped = numerator / denominator
+        if mode_code == 2 and gamma != float32(1.0):
+            mapped = math.pow(mapped, gamma)
+    return mapped
 
 
 @cuda.jit(device=True, inline=True)
@@ -132,7 +160,15 @@ def _surface_lighting_kernel(
         lambert = float32(0.0)
     elif lambert > float32(1.0):
         lambert = float32(1.0)
-    intensity = ambient + diffuse * lambert
+    flat_intensity = ambient + diffuse * light_z
+    if flat_intensity <= float32(1e-6):
+        intensity = float32(0.0)
+    else:
+        intensity = float32(1.0) + diffuse * (lambert - light_z) / flat_intensity
+        if intensity < float32(0.0):
+            intensity = float32(0.0)
+        elif intensity > float32(2.0):
+            intensity = float32(2.0)
 
     rgb[py, px, 0] = _round_to_u8(float32(rgb[py, px, 0]) * intensity)
     rgb[py, px, 1] = _round_to_u8(float32(rgb[py, px, 1]) * intensity)
@@ -159,32 +195,21 @@ def _tone_colorize_kernel(
     if px >= width or py >= height:
         return
     if inside[py, px]:
+        values[py, px] = float32(0.0)
         rgb[py, px, 0] = 0
         rgb[py, px, 1] = 0
         rgb[py, px, 2] = 0
         return
 
-    value = values[py, px]
-    window = high - low
-    if window <= float32(1e-20):
-        mapped = value
-    else:
-        mapped = (value - low) / window
-    if mapped < float32(0.0):
-        mapped = float32(0.0)
-    elif mapped > float32(1.0):
-        mapped = float32(1.0)
+    mapped = _tone_mapped_value(
+        values[py, px], mode_code, low, high, strength, gamma
+    )
 
-    if mode_code != 0:
-        denominator = math.log(strength + math.sqrt(strength * strength + float32(1.0)))
-        numerator_value = strength * mapped
-        numerator = math.log(
-            numerator_value + math.sqrt(numerator_value * numerator_value + float32(1.0))
-        )
-        if denominator > float32(0.0):
-            mapped = numerator / denominator
-        if mode_code == 2 and gamma != float32(1.0):
-            mapped = math.pow(mapped, gamma)
+    # The fractal kernel overwrites this buffer on the next frame. Reusing it
+    # for the tone-mapped height avoids another full-size GPU allocation and
+    # lets the lighting kernel sample neighboring heights without repeating the
+    # expensive tone curve for every neighbor.
+    values[py, px] = mapped
 
     wrapped = mapped * cycles + phase
     wrapped = wrapped - math.floor(wrapped)
@@ -406,7 +431,7 @@ class CudaRenderer(_BaseCudaRenderer):
                 self._values_device,
                 self._inside_device,
                 self._rgb_device,
-                np.float32(surface_lighting.strength),
+                np.float32(surface_lighting.strength * SURFACE_LIGHTING_SLOPE_SCALE),
                 np.float32(horizontal * math.cos(azimuth)),
                 np.float32(horizontal * math.sin(azimuth)),
                 np.float32(math.sin(elevation)),
@@ -459,6 +484,9 @@ class CudaRenderer(_BaseCudaRenderer):
                     ),
                     "surface_lighting_ambient": surface_lighting.ambient,
                     "surface_lighting_diffuse": surface_lighting.diffuse,
+                    "surface_lighting_height_source": "tone-mapped",
+                    "surface_lighting_slope_scale": SURFACE_LIGHTING_SLOPE_SCALE,
+                    "surface_lighting_flat_neutral": True,
                     "surface_lighting_timing_scope": "host kernel launch",
                 }
             )
